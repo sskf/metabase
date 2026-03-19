@@ -1,12 +1,11 @@
 (ns metabase-enterprise.dependencies.erd
-  "Entity Relationship Diagram (ERD) logic: resolving focal tables,
-   BFS subgraph expansion, and response building."
+  "Entity Relationship Diagram (ERD) logic: BFS subgraph expansion
+   and response building."
   (:require
    [clojure.set :as set]
    [metabase.api.common :as api]
    [metabase.models.interface :as mi]
    [metabase.util :as u]
-   [metabase.util.i18n :refer [tru]]
    [metabase.util.malli.registry :as mr]
    [metabase.util.malli.schema :as ms]
    [toucan2.core :as t2]))
@@ -53,52 +52,23 @@
    [:schema {:optional true} [:maybe :string]]
    [:hops {:optional true} [:maybe ms/IntGreaterThanOrEqualToZero]]])
 
-;;; ---------------------------------------- Phase 1: Resolve focal tables ----------------------------------------
+;;; ---------------------------------------- Resolve focal tables ----------------------------------------
 
-(def ^:private auto-focal-table-count
-  "Number of tables to auto-select as focal when none are specified."
-  3)
-
-(def ^:private ^{:doc "Columns needed for mi/can-read? permission checks on Table."}
-  table-perm-columns
-  [:id :db_id :is_published :collection_id])
-
-(defn- auto-discover-focal-table-ids
-  "Find the top N tables by FK relationship count using a SQL aggregate query.
-   Only considers readable tables. Returns a set of table IDs."
+(defn- all-readable-table-ids
+  "Return the set of all readable, active table IDs for the given database,
+   optionally filtered to a specific schema."
   [database-id schema]
-  (let [readable-ids (->> (t2/select :model/Table
-                                     {:select table-perm-columns
-                                      :where  (cond-> [:and
-                                                       [:= :db_id database-id]
-                                                       [:= :active true]]
-                                                schema (conj [:= :schema schema]))})
-                          (filter mi/can-read?)
-                          (map :id)
-                          set)]
-    (when (empty? readable-ids)
-      (throw (ex-info (tru "No tables found in the specified database/schema")
-                      {:status-code 404
-                       :database-id database-id
-                       :schema      schema})))
-    (let [fk-counts (t2/query {:select   [[:f.table_id :tid]
-                                          [:%count.* :cnt]]
-                               :from     [[:metabase_field :f]]
-                               :where    [:and
-                                          [:in :f.table_id readable-ids]
-                                          [:not= :f.fk_target_field_id nil]
-                                          [:= :f.active true]
-                                          [:not= :f.visibility_type "retired"]]
-                               :group-by [:f.table_id]
-                               :order-by [[:cnt :desc]]
-                               :limit    auto-focal-table-count})
-          top-ids   (set (map :tid fk-counts))]
-      ;; If no tables have FKs, just pick the first N readable IDs
-      (if (empty? top-ids)
-        (set (take auto-focal-table-count readable-ids))
-        top-ids))))
+  (->> (t2/select :model/Table
+                  {:select [:id :db_id :is_published :collection_id]
+                   :where  (cond-> [:and
+                                    [:= :db_id database-id]
+                                    [:= :active true]]
+                             schema (conj [:= :schema schema]))})
+       (filter mi/can-read?)
+       (map :id)
+       set))
 
-;;; ---------------------------------------- Phase 2: Lazy BFS fetch ----------------------------------------
+;;; ---------------------------------------- BFS subgraph fetch ----------------------------------------
 
 (defn- fetch-readable-tables
   "Fetch tables by IDs, filtering to only those the user can read.
@@ -172,7 +142,7 @@
             next-frontier                  (discover-fk-targets new-fields (set (keys tables-by-id')) field-by-id')]
         (recur tables-by-id' fields-by-table' field-by-id' next-frontier (dec remaining-hops))))))
 
-;;; ---------------------------------------- Phase 3: Build response ----------------------------------------
+;;; ---------------------------------------- Build response ----------------------------------------
 
 (defn build-erd-field
   "Convert a field to the ERD field shape.
@@ -238,18 +208,19 @@
 ;;; ---------------------------------------- Main entry point ----------------------------------------
 
 (def ^:private max-hops 5)
-(def ^:private default-hops 2)
+(def ^:private default-hops 1)
 
 (defn erd
   "Return an ERD for the given database, optionally scoped to specific tables/schema.
    When `table-ids` is provided, those tables are the focal points.
-   When only `database-id` is provided, auto-selects the most connected tables.
-   The `hops` parameter controls how many FK hops to traverse (default: 2, max: 5)."
+   When only `database-id` (+ optional `schema`) is provided, all readable tables
+   in that scope are focal.
+   The `hops` parameter controls how many FK hops to traverse (default: 1, max: 5)."
   [{:keys [database-id table-ids schema hops]}]
   (api/read-check :model/Database database-id)
   (let [hops            (min (or hops default-hops) max-hops)
         focal-table-ids (if (seq table-ids)
                           (set table-ids)
-                          (auto-discover-focal-table-ids database-id schema))
+                          (all-readable-table-ids database-id schema))
         subgraph        (fetch-erd-subgraph focal-table-ids hops)]
     (build-erd-response subgraph focal-table-ids)))

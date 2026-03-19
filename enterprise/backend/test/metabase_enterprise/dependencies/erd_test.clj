@@ -135,16 +135,13 @@
       (is (seq (:nodes (erd-request! {:table-ids [(mt/id :orders)]
                                       :hops      99})))))))
 
-(deftest erd-endpoint-auto-discover-test
+(deftest erd-endpoint-all-tables-when-no-table-ids-test
   (mt/with-premium-features #{:dependencies}
-    (testing "auto-discovers focal tables when none specified"
+    (testing "returns all readable tables as focal when no table-ids provided"
       (let [shape (graph-shape (erd-request! {}))]
-        (is (some (fn [[_ v]] (:focal v)) shape))
-        (is (some (fn [[_ v]] (not (:focal v))) shape))))))
-
-(deftest erd-endpoint-schema-filter-test
-  (mt/with-premium-features #{:dependencies}
-    (testing "schema param filters auto-discovery to that schema"
+        (is (every? (fn [[_ v]] (:focal v)) shape))
+        (is (>= (count shape) 1))))
+    (testing "schema param scopes which tables are included"
       (doseq [node (:nodes (erd-request! {:schema "PUBLIC"}))]
         (is (= "PUBLIC" (:schema node)))))))
 

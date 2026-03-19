@@ -11,7 +11,6 @@ import type {
 } from "metabase-types/api";
 
 import {
-  COMPACT_NODE_HEIGHT,
   DAGRE_NODE_SEP,
   DAGRE_RANK_SEP,
   HEADER_HEIGHT,
@@ -143,13 +142,7 @@ export function toFlowGraph(data: ErdResponse): {
   return memoizedToFlowGraph(data);
 }
 
-function getLayoutNodeHeight(
-  node: SchemaViewerFlowNode,
-  isCompactMode: boolean,
-): number {
-  if (isCompactMode) {
-    return COMPACT_NODE_HEIGHT;
-  }
+function getLayoutNodeHeight(node: SchemaViewerFlowNode): number {
   const fieldCount = node.data.fields?.length ?? 0;
   return HEADER_HEIGHT + fieldCount * ROW_HEIGHT;
 }
@@ -157,7 +150,6 @@ function getLayoutNodeHeight(
 export function getNodesWithPositions(
   nodes: SchemaViewerFlowNode[],
   edges: { source: string; target: string }[],
-  isCompactMode: boolean,
 ): SchemaViewerFlowNode[] {
   const dagreGraph = new dagre.graphlib.Graph();
   dagreGraph.setGraph({
@@ -168,7 +160,7 @@ export function getNodesWithPositions(
   dagreGraph.setDefaultEdgeLabel(() => ({}));
 
   nodes.forEach((node) => {
-    const height = getLayoutNodeHeight(node, isCompactMode);
+    const height = getLayoutNodeHeight(node);
     dagreGraph.setNode(node.id, {
       width: NODE_WIDTH,
       height,

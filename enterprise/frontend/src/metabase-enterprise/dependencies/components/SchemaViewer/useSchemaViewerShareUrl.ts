@@ -6,7 +6,6 @@ interface SchemaViewerShareState {
   databaseId: DatabaseId;
   schema: string | undefined;
   tableIds: ConcreteTableId[];
-  hops: number;
 }
 
 export function encode(state: SchemaViewerShareState): string {
@@ -14,7 +13,6 @@ export function encode(state: SchemaViewerShareState): string {
     d: state.databaseId,
     s: state.schema ?? "",
     t: state.tableIds,
-    h: state.hops,
   };
   return btoa(JSON.stringify(payload));
 }
@@ -24,18 +22,13 @@ export function decodeSchemaViewerShareState(
 ): SchemaViewerShareState | null {
   try {
     const json = JSON.parse(atob(encoded));
-    if (
-      typeof json.d !== "number" ||
-      !Array.isArray(json.t) ||
-      typeof json.h !== "number"
-    ) {
+    if (typeof json.d !== "number" || !Array.isArray(json.t)) {
       return null;
     }
     return {
       databaseId: json.d,
       schema: json.s || undefined,
       tableIds: json.t as ConcreteTableId[],
-      hops: json.h,
     };
   } catch {
     return null;
@@ -46,18 +39,16 @@ export function useSchemaViewerShareUrl({
   databaseId,
   schema,
   tableIds,
-  hops,
 }: {
   databaseId: DatabaseId | undefined;
   schema: string | undefined;
   tableIds: ConcreteTableId[] | null;
-  hops: number;
 }): string | null {
   return useMemo(() => {
     if (databaseId == null || tableIds == null || tableIds.length === 0) {
       return null;
     }
-    const encoded = encode({ databaseId, schema, tableIds, hops });
+    const encoded = encode({ databaseId, schema, tableIds });
     return `${window.location.origin}${window.location.pathname}?share=${encoded}`;
-  }, [databaseId, schema, tableIds, hops]);
+  }, [databaseId, schema, tableIds]);
 }

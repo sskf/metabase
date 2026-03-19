@@ -3,7 +3,11 @@ import { useEffect, useMemo, useRef } from "react";
 import { push } from "react-router-redux";
 import { t } from "ttag";
 
-import { useListDatabasesQuery } from "metabase/api";
+import {
+  skipToken,
+  useGetTableQuery,
+  useListDatabasesQuery,
+} from "metabase/api";
 import { useUserKeyValue } from "metabase/common/hooks/use-user-key-value";
 import { usePageTitle } from "metabase/hooks/use-page-title";
 import { useDispatch } from "metabase/lib/redux";
@@ -55,15 +59,47 @@ export function SchemaViewerPage({ location }: SchemaViewerPageProps) {
     return ids.map((id) => Number(id) as ConcreteTableId);
   }, [rawTableIds]);
 
+  // When table-ids is present without database-id, resolve the database from table metadata
+  const needsTableLookup =
+    rawTableIds != null && rawDatabaseId == null && rawShare == null;
+  const firstTableId = needsTableLookup
+    ? Number(Array.isArray(rawTableIds) ? rawTableIds[0] : rawTableIds)
+    : undefined;
+
+  const { data: tableData } = useGetTableQuery(
+    firstTableId != null ? { id: firstTableId } : skipToken,
+  );
+
+  useEffect(() => {
+    if (tableData != null && needsTableLookup) {
+      const url = Urls.dataStudioErdSchema(
+        tableData.db_id,
+        tableData.schema ?? "",
+        [tableData.id as ConcreteTableId],
+      );
+      dispatch(push(url));
+    }
+  }, [tableData, needsTableLookup, dispatch]);
+
   // Persist last opened database/schema
+  // Stores { databaseId, schema } under schema_viewer namespace
+  // The UserKeyValue type for schema_viewer expects { table_ids, hops } shape,
+  // but the last_database key stores a different shape — cast accordingly
   const {
-    value: lastDatabase,
-    setValue: setLastDatabase,
+    value: lastDatabaseRaw,
+    setValue: setLastDatabaseRaw,
     isLoading: isLoadingLastDatabase,
-  } = useUserKeyValue<{ databaseId: DatabaseId; schema?: string }>({
+  } = useUserKeyValue({
     namespace: "schema_viewer",
     key: "last_database",
   });
+  const lastDatabase = lastDatabaseRaw as unknown as
+    | { databaseId: DatabaseId; schema?: string }
+    | undefined;
+  const setLastDatabase = setLastDatabaseRaw as unknown as (value: {
+    databaseId: DatabaseId;
+    schema?: string;
+  }) => void;
 
   // Fetch databases to validate saved preference exists
   const { data: databasesResponse, isLoading: isLoadingDatabases } =
@@ -79,7 +115,8 @@ export function SchemaViewerPage({ location }: SchemaViewerPageProps) {
   const effectiveSchema = sharedState?.schema ?? schema;
 
   // Redirect to last opened database only on initial load (not when user clears selection)
-  const hasUrlSelection = databaseId != null || rawShare != null;
+  const hasUrlSelection =
+    databaseId != null || rawShare != null || rawTableIds != null;
   const hasRedirectedRef = useRef(false);
 
   useEffect(() => {
@@ -142,7 +179,6 @@ export function SchemaViewerPage({ location }: SchemaViewerPageProps) {
         databaseId={effectiveDatabaseId}
         schema={effectiveSchema}
         initialTableIds={sharedState?.tableIds ?? initialTableIds}
-        initialHops={sharedState?.hops ?? initialHops}
       />
     </Stack>
   );

@@ -4,7 +4,7 @@ import { Box, Group } from "metabase/ui";
 import type { ConcreteTableId, ErdField, TableId } from "metabase-types/api";
 
 import { useSchemaViewerContext } from "../SchemaViewerContext";
-import { COMPACT_ZOOM_THRESHOLD, ROW_HEIGHT } from "../constants";
+import { ROW_HEIGHT } from "../constants";
 import { getNodeId } from "../utils";
 
 import S from "./SchemaViewerFieldRow.module.css";
@@ -54,7 +54,6 @@ export function SchemaViewerFieldRow({
           nodes: [node],
           duration: 300,
           padding: 0.5,
-          minZoom: COMPACT_ZOOM_THRESHOLD,
           interpolate: "linear",
         });
       }

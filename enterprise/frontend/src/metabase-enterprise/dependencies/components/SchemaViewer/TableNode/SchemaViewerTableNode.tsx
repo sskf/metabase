@@ -1,39 +1,27 @@
 import {
-  Handle,
   type NodeProps,
-  Position,
-  useEdges,
-  useNodes,
   useReactFlow,
-  useUpdateNodeInternals,
 } from "@xyflow/react";
 import cx from "classnames";
-import { Fragment, memo, useCallback, useEffect, useMemo } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { t } from "ttag";
 
 import { getAccentColors } from "metabase/lib/colors/groups";
 import {
   ActionIcon,
-  Anchor,
   Box,
-  FixedSizeIcon,
   Group,
   Icon,
   Stack,
   Tooltip,
 } from "metabase/ui";
-import { Ellipsified } from "metabase/common/components/Ellipsified";
 import { isTypePK } from "metabase-lib/v1/types/utils/isa";
-import type { ErdField } from "metabase-types/api";
 
 import { TOOLTIP_OPEN_DELAY_MS } from "../../../constants";
-import { useSchemaViewerContext } from "../SchemaViewerContext";
-import type { SchemaViewerFlowNode, SchemaViewerNodeData } from "../types";
-import { getNodesWithPositions } from "../utils";
+import type { SchemaViewerFlowNode } from "../types";
 
 import { SchemaViewerFieldRow } from "./SchemaViewerFieldRow";
 import S from "./SchemaViewerTableNode.module.css";
-import { COMPACT_ZOOM_THRESHOLD } from "../constants";
 
 const ICON_COLORS = getAccentColors({ light: false, dark: false, gray: false });
 
@@ -46,54 +34,17 @@ export const SchemaViewerTableNode = memo(function SchemaViewerTableNode({
   id,
   data,
 }: SchemaViewerTableNodeProps) {
-  const { fitView, getNodes, getEdges, setNodes } =
-    useReactFlow<SchemaViewerFlowNode>();
-  const updateNodeInternals = useUpdateNodeInternals();
-  const { isCompactMode, onToggleCompactMode, explicitFullMode } =
-    useSchemaViewerContext();
+  const { fitView, getNodes } = useReactFlow<SchemaViewerFlowNode>();
   const headerColor = data.is_focal ? "brand" : "text-primary";
-
-  // Force React Flow to recalculate handle positions when switching modes
-  useEffect(() => {
-    updateNodeInternals(id);
-  }, [isCompactMode, id, updateNodeInternals]);
   const iconColor = ICON_COLORS[Number(data.table_id) % ICON_COLORS.length];
 
   const handleDoubleClick = useCallback(() => {
-    if (isCompactMode) {
-      // In compact mode: toggle to full mode and focus on node
-      onToggleCompactMode(false); // not explicit button click
-      // Recalculate layout for regular mode first, then fit view
-      const nodes = getNodes();
-      const edges = getEdges();
-      const newNodes = getNodesWithPositions(nodes, edges, false);
-      setNodes(newNodes);
-      const targetNode = newNodes.find((n) => n.id === id);
-      if (targetNode) {
-        fitView({
-          nodes: [targetNode],
-          duration: 300,
-          padding: 0.5,
-          minZoom: COMPACT_ZOOM_THRESHOLD,
-        });
-      }
-      focusedNodeId = id;
-    } else if (focusedNodeId === id) {
-      // In full mode with focused node
-      if (explicitFullMode) {
-        // User explicitly set full mode via button - just zoom out, don't switch to compact
-        fitView({ duration: 300 });
-      } else {
-        // Full mode was set via double-click - switch to compact and zoom out
-        onToggleCompactMode(false); // not explicit button click
-        // Use setTimeout to allow layout to update before fitting view
-        setTimeout(() => {
-          fitView({ duration: 300 });
-        }, 0);
-      }
+    if (focusedNodeId === id) {
+      // Already focused — zoom out to fit all
+      fitView({ duration: 300 });
       focusedNodeId = null;
     } else {
-      // In full mode with unfocused node: just focus on node
+      // Focus on this node
       const nodes = getNodes();
       const node = nodes.find((n) => n.id === id);
       if (node) {
@@ -101,23 +52,12 @@ export const SchemaViewerTableNode = memo(function SchemaViewerTableNode({
           nodes: [node],
           duration: 300,
           padding: 0.5,
-          minZoom: COMPACT_ZOOM_THRESHOLD,
         });
       }
       focusedNodeId = id;
     }
-  }, [
-    fitView,
-    id,
-    isCompactMode,
-    onToggleCompactMode,
-    explicitFullMode,
-    getNodes,
-    getEdges,
-    setNodes,
-  ]);
+  }, [fitView, id, getNodes]);
 
-  // Find PK field IDs that are targets of self-referencing FKs
   const selfRefTargetIds = useMemo(() => {
     const pkIds = new Set(
       data.fields.filter((f) => isTypePK(f.semantic_type)).map((f) => f.id),
@@ -136,18 +76,6 @@ export const SchemaViewerTableNode = memo(function SchemaViewerTableNode({
 
   const tableDetailsUrl = `/data-studio/data/database/${data.db_id}/schema/${data.db_id}:${data.schema ?? ""}/table/${data.table_id}`;
 
-  if (isCompactMode) {
-    return (
-      <CompactTableNode
-        nodeId={id}
-        data={data}
-        iconColor={iconColor}
-        selfRefTargetIds={selfRefTargetIds}
-        onDoubleClick={handleDoubleClick}
-      />
-    );
-  }
-
   return (
     <Stack
       className={cx(S.card, { [S.focal]: data.is_focal })}
@@ -155,7 +83,7 @@ export const SchemaViewerTableNode = memo(function SchemaViewerTableNode({
       onDoubleClick={handleDoubleClick}
     >
       <Group className={S.header} gap={8} px={16} py={20} wrap="nowrap">
-        <FixedSizeIcon name="table2" style={{ color: iconColor }} />
+        <Icon name="table2" style={{ color: iconColor }} />
         <Box
           fz={17}
           c={headerColor}
@@ -199,103 +127,3 @@ export const SchemaViewerTableNode = memo(function SchemaViewerTableNode({
     </Stack>
   );
 });
-
-// Compact node component - shown when zoom <= 0.5
-interface CompactTableNodeProps {
-  nodeId: string;
-  data: SchemaViewerNodeData;
-  iconColor: string;
-  selfRefTargetIds: Set<number>;
-  onDoubleClick: () => void;
-}
-
-function CompactTableNode({
-  nodeId,
-  data,
-  iconColor,
-  selfRefTargetIds,
-  onDoubleClick,
-}: CompactTableNodeProps) {
-  const headerColor = data.is_focal ? "brand" : "text-primary";
-
-  // Collect all connected fields that need handles for edge routing
-  const connectedFields = useMemo(() => {
-    return data.fields.filter((field) => data.connectedFieldIds.has(field.id));
-  }, [data.fields, data.connectedFieldIds]);
-
-  return (
-    <Stack
-      className={cx(S.card, S.compact, { [S.focal]: data.is_focal })}
-      gap={0}
-      onDoubleClick={onDoubleClick}
-    >
-      <Group className={S.compactHeader} gap={12} px={16} wrap="nowrap">
-        <FixedSizeIcon name="table2" size={24} style={{ color: iconColor }} />
-        <Box fz={34} c={headerColor} miw={0} style={{ flex: 1 }}>
-          <Ellipsified tooltipProps={{ openDelay: TOOLTIP_OPEN_DELAY_MS }}>
-            {data.name}
-          </Ellipsified>
-        </Box>
-      </Group>
-      {/* Handles at bottom for edge connections - same IDs as full mode */}
-      <CompactHandles
-        connectedFields={connectedFields}
-        selfRefTargetIds={selfRefTargetIds}
-      />
-    </Stack>
-  );
-}
-
-// Render handles in compact mode - positioned at node edges
-interface CompactHandlesProps {
-  connectedFields: ErdField[];
-  selfRefTargetIds: Set<number>;
-}
-
-function CompactHandles({
-  connectedFields,
-  selfRefTargetIds,
-}: CompactHandlesProps) {
-  return (
-    <div className={S.compactHandles}>
-      {connectedFields.map((field) => {
-        const isPK =
-          field.semantic_type === "type/PK" || field.semantic_type === "PK";
-        const isFK =
-          field.semantic_type === "type/FK" || field.semantic_type === "FK";
-
-        return (
-          <Fragment key={field.id}>
-            {/* FK source handle - at bottom in compact mode */}
-            {isFK && (
-              <Handle
-                type="source"
-                position={Position.Bottom}
-                id={`field-${field.id}`}
-                className={S.compactHandle}
-              />
-            )}
-            {/* PK target handle - at bottom in compact mode */}
-            {isPK && (
-              <Handle
-                type="target"
-                position={Position.Bottom}
-                id={`field-${field.id}`}
-                className={S.compactHandle}
-              />
-            )}
-            {/* Self-ref PK target handle - at bottom in compact mode */}
-            {isPK && selfRefTargetIds.has(field.id) && (
-              <Handle
-                type="target"
-                position={Position.Bottom}
-                id={`field-${field.id}-right`}
-                className={S.compactHandle}
-              />
-            )}
-          </Fragment>
-        );
-      })}
-    </div>
-  );
-}

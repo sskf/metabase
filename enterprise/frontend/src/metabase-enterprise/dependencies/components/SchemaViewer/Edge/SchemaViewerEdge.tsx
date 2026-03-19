@@ -7,7 +7,6 @@ import { memo, useMemo } from "react";
 
 import { usePalette } from "metabase/common/hooks/use-palette";
 
-import { useIsCompactMode } from "../SchemaViewerContext";
 import type { SchemaViewerEdgeData, SchemaViewerFlowEdge } from "../types";
 
 // Crow's foot geometry constants
@@ -21,93 +20,81 @@ type SymbolProps = {
   x: number;
   y: number;
   stroke: string;
-  strokeWidth: number;
-  scale?: number;
 };
 
-function OneSourceSymbol({ x, y, stroke, strokeWidth, scale = 1 }: SymbolProps) {
-  const gap = GAP * scale;
-  const h = H * scale;
+function OneSourceSymbol({ x, y, stroke }: SymbolProps) {
   return (
     <line
       data-testid="schema-viewer-edge-symbol-line"
-      x1={x + gap}
-      y1={y - h}
-      x2={x + gap}
-      y2={y + h}
+      x1={x + GAP}
+      y1={y - H}
+      x2={x + GAP}
+      y2={y + H}
       stroke={stroke}
-      strokeWidth={strokeWidth}
+      strokeWidth={1.5}
     />
   );
 }
 
-function ManySourceSymbol({ x, y, stroke, strokeWidth, scale = 1 }: SymbolProps) {
-  const gap = GAP * scale;
-  const w = W * scale;
-  const h = H * scale;
+function ManySourceSymbol({ x, y, stroke }: SymbolProps) {
   return (
     <>
       <line
         data-testid="schema-viewer-edge-symbol-line"
-        x1={x + gap + w}
+        x1={x + GAP + W}
         y1={y}
-        x2={x + gap}
-        y2={y - h}
+        x2={x + GAP}
+        y2={y - H}
         stroke={stroke}
-        strokeWidth={strokeWidth}
+        strokeWidth={1.5}
       />
       <line
         data-testid="schema-viewer-edge-symbol-line"
-        x1={x + gap + w}
+        x1={x + GAP + W}
         y1={y}
-        x2={x + gap}
-        y2={y + h}
+        x2={x + GAP}
+        y2={y + H}
         stroke={stroke}
-        strokeWidth={strokeWidth}
+        strokeWidth={1.5}
       />
     </>
   );
 }
 
-function OneTargetSymbol({ x, y, stroke, strokeWidth, scale = 1 }: SymbolProps) {
-  const gap = GAP * scale;
-  const h = H * scale;
+function OneTargetSymbol({ x, y, stroke }: SymbolProps) {
   return (
     <line
       data-testid="schema-viewer-edge-symbol-line"
-      x1={x - gap}
-      y1={y - h}
-      x2={x - gap}
-      y2={y + h}
+      x1={x - GAP}
+      y1={y - H}
+      x2={x - GAP}
+      y2={y + H}
       stroke={stroke}
-      strokeWidth={strokeWidth}
+      strokeWidth={1.5}
     />
   );
 }
 
-function ManyTargetSymbol({ x, y, stroke, strokeWidth, scale = 1 }: SymbolProps) {
-  const gap = GAP * scale;
-  const w = W * scale;
-  const h = H * scale;
+function ManyTargetSymbol({ x, y, stroke }: SymbolProps) {
   return (
     <>
       <line
         data-testid="schema-viewer-edge-symbol-line"
-        x1={x - gap - w}
+        x1={x - GAP - W}
         y1={y}
-        x2={x - gap}
-        y2={y - h}
+        x2={x - GAP}
+        y2={y - H}
         stroke={stroke}
-        strokeWidth={strokeWidth}
+        strokeWidth={1.5}
       />
       <line
         data-testid="schema-viewer-edge-symbol-line"
-        x1={x - gap - w}
+        x1={x - GAP - W}
         y1={y}
-        x2={x - gap}
-        y2={y + h}
+        x2={x - GAP}
+        y2={y + H}
         stroke={stroke}
-        strokeWidth={strokeWidth}
+        strokeWidth={1.5}
       />
     </>
   );
@@ -128,23 +115,21 @@ type SymbolWrapperProps = {
   x: number;
   y: number;
   stroke: string;
-  strokeWidth: number;
-  scale?: number;
 };
 
-function SourceSymbol({ type, x, y, stroke, strokeWidth, scale }: SymbolWrapperProps) {
+function SourceSymbol({ type, x, y, stroke }: SymbolWrapperProps) {
   return type === "many" ? (
-    <ManySourceSymbol x={x} y={y} stroke={stroke} strokeWidth={strokeWidth} scale={scale} />
+    <ManySourceSymbol x={x} y={y} stroke={stroke} />
   ) : (
-    <OneSourceSymbol x={x} y={y} stroke={stroke} strokeWidth={strokeWidth} scale={scale} />
+    <OneSourceSymbol x={x} y={y} stroke={stroke} />
   );
 }
 
-function TargetSymbol({ type, x, y, stroke, strokeWidth, scale }: SymbolWrapperProps) {
+function TargetSymbol({ type, x, y, stroke }: SymbolWrapperProps) {
   return type === "many" ? (
-    <ManyTargetSymbol x={x} y={y} stroke={stroke} strokeWidth={strokeWidth} scale={scale} />
+    <ManyTargetSymbol x={x} y={y} stroke={stroke} />
   ) : (
-    <OneTargetSymbol x={x} y={y} stroke={stroke} strokeWidth={strokeWidth} scale={scale} />
+    <OneTargetSymbol x={x} y={y} stroke={stroke} />
   );
 }
 
@@ -153,7 +138,6 @@ export const SchemaViewerEdge = memo(function SchemaViewerEdge(
 ) {
   const palette = usePalette();
   const isInitialized = useNodesInitialized();
-  const isCompactMode = useIsCompactMode();
   const isSelfRef = props.source === props.target;
   const isHidden = !isInitialized;
   const animationClass = "schema-viewer-edge-march";
@@ -161,19 +145,16 @@ export const SchemaViewerEdge = memo(function SchemaViewerEdge(
   const relationship = props.data?.relationship ?? "many-to-one";
   const symbols = useMemo(() => getSymbolTypes(relationship), [relationship]);
   const stroke = palette["border"] ?? "currentColor";
-  const strokeWidth = isCompactMode ? 3 : 1.5;
-  const scale = isCompactMode ? 2 : 1;
 
   const style = useMemo(
     () => ({
-      strokeWidth,
+      strokeWidth: 1.5,
       stroke,
       ...(isHidden ? { visibility: "hidden" as const } : {}),
     }),
-    [stroke, strokeWidth, isHidden],
+    [stroke, isHidden],
   );
 
-  // Compute edge path for both branches so hooks stay unconditional
   let edgePath: string;
 
   if (isSelfRef) {
@@ -217,8 +198,6 @@ export const SchemaViewerEdge = memo(function SchemaViewerEdge(
             x={props.sourceX}
             y={props.sourceY}
             stroke={stroke}
-            strokeWidth={strokeWidth}
-            scale={scale}
           />
           {isSelfRef ? (
             <SourceSymbol
@@ -226,8 +205,6 @@ export const SchemaViewerEdge = memo(function SchemaViewerEdge(
               x={props.targetX}
               y={props.targetY}
               stroke={stroke}
-              strokeWidth={strokeWidth}
-              scale={scale}
             />
           ) : (
             <TargetSymbol
@@ -235,8 +212,6 @@ export const SchemaViewerEdge = memo(function SchemaViewerEdge(
               x={props.targetX}
               y={props.targetY}
               stroke={stroke}
-              strokeWidth={strokeWidth}
-              scale={scale}
             />
           )}
         </g>
