@@ -23,7 +23,6 @@ type SchemaViewerPageQuery = {
   "table-ids"?: string | string[];
   schema?: string;
   share?: string;
-  hops?: string;
 };
 
 type SchemaViewerPageProps = {
@@ -43,13 +42,10 @@ export function SchemaViewerPage({ location }: SchemaViewerPageProps) {
 
   const rawDatabaseId = location?.query?.["database-id"];
   const rawTableIds = location?.query?.["table-ids"];
-  const rawHops = location?.query?.hops;
   const schema = location?.query?.schema;
 
   const databaseId: DatabaseId | undefined =
     rawDatabaseId != null ? Number(rawDatabaseId) : undefined;
-  const initialHops: number | undefined =
-    rawHops != null ? Number(rawHops) : undefined;
 
   const initialTableIds = useMemo(() => {
     if (rawTableIds == null) {
@@ -81,25 +77,26 @@ export function SchemaViewerPage({ location }: SchemaViewerPageProps) {
     }
   }, [tableData, needsTableLookup, dispatch]);
 
-  // Persist last opened database/schema
-  // Stores { databaseId, schema } under schema_viewer namespace
-  // The UserKeyValue type for schema_viewer expects { table_ids, hops } shape,
-  // but the last_database key stores a different shape — cast accordingly
+  // Persist last selection (database, schema, table IDs)
   const {
-    value: lastDatabaseRaw,
-    setValue: setLastDatabaseRaw,
-    isLoading: isLoadingLastDatabase,
+    value: lastSelectionRaw,
+    setValue: setLastSelectionRaw,
+    isLoading: isLoadingLastSelection,
   } = useUserKeyValue({
     namespace: "schema_viewer",
     key: "last_database",
   });
-  const lastDatabase = lastDatabaseRaw as unknown as
-    | { databaseId: DatabaseId; schema?: string }
-    | undefined;
-  const setLastDatabase = setLastDatabaseRaw as unknown as (value: {
-    databaseId: DatabaseId;
+  type LastSelection = {
+    databaseId?: DatabaseId;
     schema?: string;
-  }) => void;
+    tableIds?: number[];
+  };
+  const lastSelection = (lastSelectionRaw ?? undefined) as unknown as
+    | LastSelection
+    | undefined;
+  const setLastSelection = setLastSelectionRaw as unknown as (
+    value: LastSelection,
+  ) => void;
 
   // Fetch databases to validate saved preference exists
   const { data: databasesResponse, isLoading: isLoadingDatabases } =
@@ -114,64 +111,83 @@ export function SchemaViewerPage({ location }: SchemaViewerPageProps) {
   const effectiveDatabaseId = sharedState?.databaseId ?? databaseId;
   const effectiveSchema = sharedState?.schema ?? schema;
 
-  // Redirect to last opened database only on initial load (not when user clears selection)
+  // Redirect to last selection only on initial load (not when user clears selection)
   const hasUrlSelection =
     databaseId != null || rawShare != null || rawTableIds != null;
   const hasRedirectedRef = useRef(false);
 
   useEffect(() => {
-    // Only redirect once on initial load
     if (hasRedirectedRef.current) {
       return;
     }
 
     if (
-      !isLoadingLastDatabase &&
+      !isLoadingLastSelection &&
       !isLoadingDatabases &&
       !hasUrlSelection &&
-      lastDatabase != null &&
+      lastSelection != null &&
+      lastSelection.databaseId != null &&
       databases != null
     ) {
-      // Validate saved database still exists
       const dbExists = databases.some(
-        (db) => db.id === lastDatabase.databaseId,
+        (db) => db.id === lastSelection.databaseId,
       );
       if (dbExists) {
         hasRedirectedRef.current = true;
+        const tableIds =
+          lastSelection.tableIds != null && lastSelection.tableIds.length > 0
+            ? (lastSelection.tableIds as ConcreteTableId[])
+            : undefined;
         const url =
-          lastDatabase.schema != null
+          lastSelection.schema != null
             ? Urls.dataStudioErdSchema(
-                lastDatabase.databaseId,
-                lastDatabase.schema,
+                lastSelection.databaseId,
+                lastSelection.schema,
+                tableIds,
               )
-            : Urls.dataStudioErdDatabase(lastDatabase.databaseId);
+            : Urls.dataStudioErdDatabase(lastSelection.databaseId);
         dispatch(push(url));
       }
     }
 
-    // Mark as "redirected" even if we didn't redirect (no saved db or db doesn't exist)
-    // This prevents future redirects when user clears selection
-    if (!isLoadingLastDatabase && !isLoadingDatabases) {
+    if (!isLoadingLastSelection && !isLoadingDatabases) {
       hasRedirectedRef.current = true;
     }
   }, [
-    isLoadingLastDatabase,
+    isLoadingLastSelection,
     isLoadingDatabases,
     hasUrlSelection,
-    lastDatabase,
+    lastSelection,
     databases,
     dispatch,
   ]);
 
-  // Save current database/schema as last opened
+  // Save current selection — only persist when we have a table selection.
+  // Save null when user clears GraphEntryInput (uses PUT, not DELETE, to avoid races).
+  const effectiveTableIds = sharedState?.tableIds ?? initialTableIds;
   useEffect(() => {
-    if (effectiveDatabaseId != null) {
-      setLastDatabase({
+    if (
+      effectiveDatabaseId != null &&
+      effectiveTableIds != null &&
+      effectiveTableIds.length > 0
+    ) {
+      setLastSelection({
         databaseId: effectiveDatabaseId,
         schema: effectiveSchema,
+        tableIds: effectiveTableIds as number[],
       });
+    } else if (hasRedirectedRef.current && effectiveDatabaseId == null) {
+      // Save empty object to clear — uses the same PUT endpoint so it always
+      // overwrites any in-flight save (no PUT/DELETE race).
+      // The redirect checks lastSelection.databaseId != null, so {} won't trigger it.
+      setLastSelection({});
     }
-  }, [effectiveDatabaseId, effectiveSchema, setLastDatabase]);
+  }, [
+    effectiveDatabaseId,
+    effectiveSchema,
+    effectiveTableIds,
+    setLastSelection,
+  ]);
 
   return (
     <Stack h="100%">
