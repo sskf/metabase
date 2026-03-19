@@ -76,7 +76,7 @@ export function SchemaViewerFieldRow({
       <Box
         className={S.name}
         fz="sm"
-        fw={isPK ? "bold" : "normal"}
+        fw={isPK || canExpand ? "bold" : "normal"}
         c={isClickable ? "brand" : undefined}
         style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}
       >

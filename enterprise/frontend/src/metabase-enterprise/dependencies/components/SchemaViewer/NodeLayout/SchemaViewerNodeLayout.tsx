@@ -27,6 +27,9 @@ export function SchemaViewerNodeLayout() {
     useReactFlow<SchemaViewerFlowNode>();
   const isInitialized = useNodesInitialized();
   const prevNodeSetKeyRef = useRef<string | null>(null);
+  const positionedNodesRef = useRef<Map<string, { x: number; y: number }>>(
+    new Map(),
+  );
 
   useLayoutEffect(() => {
     if (isInitialized) {
@@ -39,7 +42,18 @@ export function SchemaViewerNodeLayout() {
       ) {
         prevNodeSetKeyRef.current = currentNodeSetKey;
         const edges = getEdges();
-        const newNodes = getNodesWithPositions(nodes, edges);
+
+        // Pass existing positions so previously-positioned nodes stay in place
+        const existingPositions = positionedNodesRef.current;
+        const newNodes = getNodesWithPositions(nodes, edges, existingPositions);
+
+        // Update the position cache with all current node positions
+        const updatedPositions = new Map<string, { x: number; y: number }>();
+        for (const node of newNodes) {
+          updatedPositions.set(node.id, node.position);
+        }
+        positionedNodesRef.current = updatedPositions;
+
         setNodes(newNodes);
         fitView({ nodes: newNodes });
       }

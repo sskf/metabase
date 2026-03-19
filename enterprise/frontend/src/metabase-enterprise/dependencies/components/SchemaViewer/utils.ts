@@ -147,9 +147,41 @@ function getLayoutNodeHeight(node: SchemaViewerFlowNode): number {
   return HEADER_HEIGHT + fieldCount * ROW_HEIGHT;
 }
 
+type Rect = { x: number; y: number; w: number; h: number };
+
+function rectsOverlap(a: Rect, b: Rect, gap: number): boolean {
+  return (
+    a.x < b.x + b.w + gap &&
+    a.x + a.w + gap > b.x &&
+    a.y < b.y + b.h + gap &&
+    a.y + a.h + gap > b.y
+  );
+}
+
+/**
+ * Shift a rect so it no longer overlaps any rect in `placed`.
+ * Tries moving right first, then down, in `gap`-sized steps.
+ */
+function resolveOverlap(rect: Rect, placed: Rect[], gap: number): Rect {
+  const overlaps = () => placed.some((p) => rectsOverlap(rect, p, gap));
+  // Try shifting right in small increments
+  for (let attempt = 0; attempt < 20 && overlaps(); attempt++) {
+    rect = { ...rect, x: rect.x + rect.w + gap };
+  }
+  return rect;
+}
+
+/**
+ * Compute positions for flow nodes using dagre layout.
+ *
+ * When `existingPositions` is provided, nodes that already have positions
+ * are kept in place and only newly-added nodes receive dagre-computed positions.
+ * New nodes are shifted if they would overlap with any existing node.
+ */
 export function getNodesWithPositions(
   nodes: SchemaViewerFlowNode[],
   edges: { source: string; target: string }[],
+  existingPositions?: Map<string, { x: number; y: number }>,
 ): SchemaViewerFlowNode[] {
   const dagreGraph = new dagre.graphlib.Graph();
   dagreGraph.setGraph({
@@ -173,21 +205,55 @@ export function getNodesWithPositions(
 
   dagre.layout(dagreGraph);
 
-  return nodes.map((node) => {
-    const { x, y, width, height } = dagreGraph.node(node.id);
-    return {
-      ...node,
-      position: {
-        x: x - width / 2,
-        y: y - height / 2,
-      },
-      // Sync dimensions with React Flow's internal state
-      style: {
-        ...node.style,
-        width,
-        height,
-        opacity: 1, // Show after positioning
-      },
-    };
+  // First pass: assign positions (cached or dagre-computed)
+  const positioned = nodes.map((node) => {
+    const existing = existingPositions?.get(node.id);
+    const { width, height } = dagreGraph.node(node.id);
+    const isNew = existing == null;
+    const position = isNew
+      ? {
+          x: dagreGraph.node(node.id).x - width / 2,
+          y: dagreGraph.node(node.id).y - height / 2,
+        }
+      : existing;
+
+    return { node, position, width, height, isNew };
   });
+
+  // Second pass: resolve overlaps for new nodes against all placed nodes
+  if (existingPositions != null && existingPositions.size > 0) {
+    const placedRects: Rect[] = positioned
+      .filter((p) => !p.isNew)
+      .map((p) => ({
+        x: p.position.x,
+        y: p.position.y,
+        w: p.width,
+        h: p.height,
+      }));
+
+    for (const entry of positioned) {
+      if (entry.isNew) {
+        let rect: Rect = {
+          x: entry.position.x,
+          y: entry.position.y,
+          w: entry.width,
+          h: entry.height,
+        };
+        rect = resolveOverlap(rect, placedRects, DAGRE_NODE_SEP);
+        entry.position = { x: rect.x, y: rect.y };
+        placedRects.push(rect);
+      }
+    }
+  }
+
+  return positioned.map(({ node, position, width, height }) => ({
+    ...node,
+    position,
+    style: {
+      ...node.style,
+      width,
+      height,
+      opacity: 1,
+    },
+  }));
 }
