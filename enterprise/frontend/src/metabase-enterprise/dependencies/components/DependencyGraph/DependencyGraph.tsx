@@ -28,6 +28,7 @@ import S from "./DependencyGraph.module.css";
 import { GraphContext } from "./GraphContext";
 import { GraphDependencyPanel } from "./GraphDependencyPanel";
 import { GraphEdge } from "./GraphEdge";
+import type { PickerEntry } from "./GraphEntryInput";
 import { GraphEntryInput } from "./GraphEntryInput";
 import { GraphInfoPanel } from "./GraphInfoPanel";
 import { GraphNode } from "./GraphNode";
@@ -59,7 +60,7 @@ type DependencyGraphProps = {
   headerRightSide?: ReactNode;
   withEntryPicker?: boolean;
   openLinksInNewTab?: boolean;
-  getGraphUrl: (entry?: DependencyEntry) => string;
+  getGraphUrl: (entry: PickerEntry | undefined) => string;
 };
 
 export function DependencyGraph({

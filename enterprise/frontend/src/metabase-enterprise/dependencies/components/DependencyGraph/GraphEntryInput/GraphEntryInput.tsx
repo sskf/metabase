@@ -8,6 +8,7 @@ import type { EntityPickerProps } from "metabase/common/components/Pickers";
 import { trackDependencyEntitySelected } from "metabase/data-studio/analytics";
 import { useDispatch } from "metabase/lib/redux";
 import { Button, Card, FixedSizeIcon } from "metabase/ui";
+import type { IconName } from "metabase/ui/components/icons/Icon/icons";
 import type {
   DependencyEntry,
   DependencyNode,
@@ -21,7 +22,7 @@ import { SEARCH_MODELS } from "./constants";
 
 export type SelectedEntry = {
   label: string;
-  icon: string;
+  icon: IconName;
 };
 
 type GraphEntryInputProps = {

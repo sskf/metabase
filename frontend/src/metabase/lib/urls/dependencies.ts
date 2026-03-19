@@ -1,5 +1,4 @@
 import type {
-  DependencyEntry,
   DependencyGroupType,
   DependencySortColumn,
   SortDirection,
@@ -10,7 +9,7 @@ const GRAPH_URL = `${BASE_URL}/dependencies`;
 const DIAGNOSTICS_URL = `${BASE_URL}/dependency-diagnostics`;
 
 export type DependencyGraphParams = {
-  entry?: DependencyEntry;
+  entry?: { id: string | number; type: string };
   baseUrl?: string;
 };
 

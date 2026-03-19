@@ -1,20 +1,10 @@
-import {
-  type NodeProps,
-  useReactFlow,
-} from "@xyflow/react";
+import { type NodeProps, useReactFlow } from "@xyflow/react";
 import cx from "classnames";
 import { memo, useCallback, useMemo } from "react";
 import { t } from "ttag";
 
-import { getAccentColors } from "metabase/lib/colors/groups";
-import {
-  ActionIcon,
-  Box,
-  Group,
-  Icon,
-  Stack,
-  Tooltip,
-} from "metabase/ui";
+import { ActionIcon, Box, Group, Icon, Stack, Tooltip } from "metabase/ui";
+import { getAccentColors } from "metabase/ui/colors/groups";
 import { isTypePK } from "metabase-lib/v1/types/utils/isa";
 
 import { TOOLTIP_OPEN_DELAY_MS } from "../../../constants";
