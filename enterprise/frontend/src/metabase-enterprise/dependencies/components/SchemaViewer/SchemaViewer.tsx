@@ -8,12 +8,14 @@ import {
   useNodesState,
 } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { push } from "react-router-redux";
 import { t } from "ttag";
 
 import { skipToken } from "metabase/api";
 import { getErrorMessage } from "metabase/api/utils/errors";
 import type { EntityPickerProps } from "metabase/common/components/Pickers";
 import * as Urls from "metabase/lib/urls";
+import { useDispatch } from "metabase/lib/redux";
 import { AppSwitcher } from "metabase/nav/components/AppSwitcher";
 import {
   ActionIcon,
@@ -31,7 +33,6 @@ import type {
   ConcreteTableId,
   DatabaseId,
   DependencyNode,
-  ErdResponse,
   GetErdRequest,
   SearchModel,
   TableDependencyNodeData,
@@ -98,31 +99,13 @@ function getErdQueryParams({
   return params;
 }
 
-function buildEntryNode(
-  data: ErdResponse,
-  databaseId: DatabaseId,
-): DependencyNode | null {
-  const focal = data.nodes.find((n) => n.is_focal);
-  if (!focal) {
-    return null;
-  }
-  return {
-    id: Number(focal.table_id),
-    type: "table",
-    data: {
-      name: focal.name,
-      display_name: focal.display_name,
-      db_id: databaseId,
-      schema: focal.schema,
-    } as TableDependencyNodeData,
-  };
-}
-
 export function SchemaViewer({
   databaseId,
   schema,
   initialTableIds,
 }: SchemaViewerProps) {
+  const dispatch = useDispatch();
+
   // Keep selected table IDs for FK expansion
   const [selectedTableIds, setSelectedTableIds] = useState<
     ConcreteTableId[] | null
@@ -132,6 +115,12 @@ export function SchemaViewer({
     }
     return null;
   });
+
+  // Track the primary table ID (first explicitly selected table) for GraphEntryInput display.
+  // This stays stable during FK expansion so the entry button shows the original selection.
+  const [primaryTableId, setPrimaryTableId] = useState<ConcreteTableId | null>(
+    () => (initialTableIds != null && initialTableIds.length > 0 ? initialTableIds[0] : null),
+  );
 
   // Sync selectedTableIds when URL-driven props change (navigation via GraphEntryInput)
   const currentContextKey =
@@ -149,6 +138,13 @@ export function SchemaViewer({
         ? initialTableIds
         : null,
     );
+    // Only update primary table when the first table changes (new picker selection)
+    const newPrimary = initialTableIds != null && initialTableIds.length > 0
+      ? initialTableIds[0]
+      : null;
+    if (newPrimary !== primaryTableId) {
+      setPrimaryTableId(newPrimary);
+    }
   }
 
   const { data, isFetching, error } = useGetErdQuery(
@@ -174,14 +170,17 @@ export function SchemaViewer({
     [nodes],
   );
 
-  // Handler for expanding to a related table via FK click
+  // Handler for expanding to a related table via FK click.
+  // Updates the URL with all selected table-ids so the URL represents the full state.
   const handleExpandToTable = useCallback(
     (tableId: TableId) => {
-      if (selectedTableIds != null) {
-        setSelectedTableIds([...selectedTableIds, tableId as ConcreteTableId]);
+      if (selectedTableIds != null && databaseId != null) {
+        const newTableIds = [...selectedTableIds, tableId as ConcreteTableId];
+        const url = Urls.dataStudioErdSchema(databaseId, schema ?? "", newTableIds);
+        dispatch(push(url));
       }
     },
-    [selectedTableIds],
+    [selectedTableIds, databaseId, schema, dispatch],
   );
 
   const shareUrl = useSchemaViewerShareUrl({
@@ -222,13 +221,29 @@ export function SchemaViewer({
     }
   }, [hasEntry, graph, error, isFetching, setNodes, setEdges]);
 
-  // Build entry node for GraphEntryInput (only when not on shared link)
+  // Build entry node for GraphEntryInput from the primary (first-selected) table.
+  // Uses primaryTableId so FK expansion doesn't change the displayed entry.
   const entryNode = useMemo<DependencyNode | null>(() => {
-    if (data == null || databaseId == null) {
+    if (data == null || databaseId == null || primaryTableId == null) {
       return null;
     }
-    return buildEntryNode(data, databaseId);
-  }, [data, databaseId]);
+    const primaryNode = data.nodes.find(
+      (n) => Number(n.table_id) === Number(primaryTableId),
+    );
+    if (!primaryNode) {
+      return null;
+    }
+    return {
+      id: Number(primaryNode.table_id),
+      type: "table",
+      data: {
+        name: primaryNode.name,
+        display_name: primaryNode.display_name,
+        db_id: databaseId,
+        schema: primaryNode.schema,
+      } as TableDependencyNodeData,
+    };
+  }, [data, databaseId, primaryTableId]);
 
   const getGraphUrl = useCallback(
     (entry: PickerEntry | undefined): string => {
@@ -329,13 +344,6 @@ export function SchemaViewer({
               <Text c="text-secondary">
                 {getErrorMessage(error, t`Failed to load schema.`)}
               </Text>
-            </Stack>
-          </Panel>
-        )}
-        {!hasEntry && !isFetching && error == null && (
-          <Panel position="top-center">
-            <Stack align="center" justify="center" pt="xl">
-              <Text c="text-tertiary">{t`Pick a table to view its schema`}</Text>
             </Stack>
           </Panel>
         )}

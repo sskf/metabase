@@ -101,12 +101,15 @@
         (is (nil? (:fk_target_field_id pk-field)))
         (is (nil? (:fk_target_table_id pk-field)))))
 
-    (testing "FK field to excluded table has nil target IDs (no ID leak)"
-      (let [response (erd-request! {:table-ids [(mt/id :orders)] :hops 0})]
-        (doseq [field (mapcat :fields (:nodes response))
-                :when (= "type/FK" (:semantic_type field))]
-          (is (nil? (:fk_target_field_id field)))
-          (is (nil? (:fk_target_table_id field))))))))
+    (testing "FK fields at hops=0 still resolve target IDs for readable tables (enables expand)"
+      (let [response (erd-request! {:table-ids [(mt/id :orders)] :hops 0})
+            orders   (first (filter #(= (mt/id :orders) (:table_id %)) (:nodes response)))
+            fk-field (first (filter #(= "PRODUCT_ID" (:name %)) (:fields orders)))]
+        ;; FK targets are resolved even when hops=0 (target tables are readable)
+        (is (= (mt/id :products :id) (:fk_target_field_id fk-field)))
+        (is (= (mt/id :products)     (:fk_target_table_id fk-field)))
+        ;; Only one node at hops=0 (the focal table itself, no expansion)
+        (is (= 1 (count (:nodes response))))))))
 
 (deftest erd-graph-self-referential-fk-test
   (mt/with-premium-features #{:dependencies}

@@ -144,10 +144,39 @@
 
 ;;; ---------------------------------------- Build response ----------------------------------------
 
+(defn- resolve-edge-fk-targets
+  "For FK fields in the graph whose targets are outside `field-by-id`,
+   batch-resolve their table_id and permission-check the target tables.
+   Returns an enriched field-by-id with stub entries for readable targets,
+   enabling the frontend to render expand buttons on edge FK fields."
+  [fields-by-table field-by-id]
+  (let [unknown-fk-ids (->> (mapcat val fields-by-table)
+                             (keep :fk_target_field_id)
+                             (remove field-by-id)
+                             set)]
+    (if (empty? unknown-fk-ids)
+      field-by-id
+      (let [target-fields (t2/select :model/Field
+                                     :id [:in unknown-fk-ids]
+                                     :active true
+                                     :visibility_type [:not= "retired"])
+            readable-tids (->> (t2/select :model/Table
+                                          :id [:in (set (map :table_id target-fields))]
+                                          :active true)
+                               (filter mi/can-read?)
+                               (map :id)
+                               set)
+            stubs         (into {}
+                                (keep (fn [f]
+                                        (when (readable-tids (:table_id f))
+                                          [(:id f) {:id (:id f) :table_id (:table_id f)}])))
+                                target-fields)]
+        (merge field-by-id stubs)))))
+
 (defn build-erd-field
   "Convert a field to the ERD field shape.
-   Nils out FK target references when the target table isn't in the visible graph,
-   so we don't leak field/table IDs the user can't access."
+   Nils out FK target references when the target table can't be resolved
+   or the user can't read the target table."
   [field field-by-id]
   (let [target-table-id (some-> (:fk_target_field_id field) field-by-id :table_id)]
     {:id                 (:id field)
@@ -191,9 +220,12 @@
          vec)))
 
 (defn build-erd-response
-  "Build the ERD response from fetched subgraph data."
+  "Build the ERD response from fetched subgraph data.
+   Enriches field-by-id with edge FK targets so the frontend can render
+   expand buttons on FK fields pointing to tables outside the visible graph."
   [{:keys [tables-by-id fields-by-table field-by-id all-table-ids]} focal-table-ids]
-  (let [nodes (->> all-table-ids
+  (let [field-by-id (resolve-edge-fk-targets fields-by-table field-by-id)
+        nodes (->> all-table-ids
                    (keep (fn [tid]
                            (when-let [table (tables-by-id tid)]
                              (build-erd-node table
