@@ -55,7 +55,14 @@ export function SchemaViewerNodeLayout() {
         positionedNodesRef.current = updatedPositions;
 
         setNodes(newNodes);
-        fitView({ nodes: newNodes });
+
+        // Focus on newly-added nodes (FK expansion), or fit all (initial load)
+        const newlyAdded = newNodes.filter((n) => !existingPositions.has(n.id));
+        if (newlyAdded.length > 0 && newlyAdded.length < newNodes.length) {
+          fitView({ nodes: newlyAdded, duration: 300, padding: 0.5 });
+        } else {
+          fitView({ nodes: newNodes });
+        }
       }
     }
   }, [isInitialized, getNodes, getEdges, setNodes, fitView]);
