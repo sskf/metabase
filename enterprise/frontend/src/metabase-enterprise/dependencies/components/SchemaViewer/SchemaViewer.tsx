@@ -46,6 +46,7 @@ import { SchemaViewerEdge } from "./Edge";
 import { SchemaViewerNodeLayout } from "./NodeLayout";
 import S from "./SchemaViewer.module.css";
 import { SchemaViewerContext } from "./SchemaViewerContext";
+import { SchemaViewerSelectInput } from "./SchemaViewerSelectInput";
 import { SchemaViewerTableNode } from "./TableNode";
 import { MAX_ZOOM, MIN_ZOOM } from "./constants";
 import type { SchemaViewerFlowEdge, SchemaViewerFlowNode } from "./types";
@@ -325,13 +326,16 @@ export function SchemaViewer({
         </Panel>
         {nodes.length > 0 && <SchemaViewerNodeLayout />}
         <Panel className={S.entryInput} position="top-left">
-          <GraphEntryInput
-            node={entryNode}
-            isGraphFetching={isFetching}
-            getGraphUrl={getGraphUrl}
-            allowedSearchModels={TABLE_SEARCH_MODELS}
-            pickerModels={TABLE_PICKER_MODELS}
-          />
+          <Group gap="sm" wrap="nowrap">
+            <GraphEntryInput
+              node={entryNode}
+              isGraphFetching={isFetching}
+              getGraphUrl={getGraphUrl}
+              allowedSearchModels={TABLE_SEARCH_MODELS}
+              pickerModels={TABLE_PICKER_MODELS}
+            />
+            {nodes.length > 0 && <SchemaViewerSelectInput nodes={nodes} />}
+          </Group>
         </Panel>
         {isFetching && (
           <Box className={S.centerLoader}>
