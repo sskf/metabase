@@ -54,6 +54,7 @@ import {
   fetchDashboard,
   fetchDashboardCardDataAction,
   markCardAsSlow,
+  receiveBatchCardResult,
   setDashboardAttributes,
   setDocumentTitle,
   setShowLoadingCompleteFavicon,
@@ -395,6 +396,17 @@ export const loadingDashCards = createReducer(
           };
         }
       })
+      .addCase(receiveBatchCardResult, (state, { payload }) => {
+        const { dashcard_id } = payload;
+        const loadingIds = state.loadingIds.filter((id) => id !== dashcard_id);
+        return {
+          ...state,
+          loadingIds,
+          ...(loadingIds.length === 0
+            ? { endTime: performance.now(), loadingStatus: "complete" }
+            : {}),
+        };
+      })
       .addCase(cancelFetchCardData, (state, action) => {
         const { dashcard_id } = action.payload;
         const loadingIds = state.loadingIds.filter((id) => id !== dashcard_id);
@@ -424,6 +436,10 @@ export const dashcardData = createReducer(
         if (dashcard_id && card_id) {
           return assocIn(state, [dashcard_id, card_id], result);
         }
+      })
+      .addCase(receiveBatchCardResult, (state, { payload }) => {
+        const { dashcard_id, card_id, result } = payload;
+        return assocIn(state, [dashcard_id, card_id], result);
       })
       .addCase(clearCardData, (state, action) => {
         const { cardId, dashcardId } = action.payload;
