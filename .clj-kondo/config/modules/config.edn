@@ -1161,6 +1161,7 @@
    :api  #{metabase.mcp.api
            metabase.mcp.core
            metabase.mcp.init}
+   :model-imports #{:model/Session}
    :uses #{agent-api
            api
            api-scope
@@ -1169,6 +1170,7 @@
            oauth-server
            request
            server
+           session
            settings
            system
            util}}
