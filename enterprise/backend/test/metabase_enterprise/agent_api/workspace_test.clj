@@ -29,7 +29,7 @@
   "Sets up JWT auth and premium features needed for agent API + workspaces."
   [& body]
   `(sso.test-setup/with-jwt-default-setup!
-     (mt/with-additional-premium-features #{:agent-api :metabot-v3 :workspaces :transforms}
+     (mt/with-additional-premium-features #{:agent-api :workspaces :transforms}
        ~@body)))
 
 (defn- auth-headers
@@ -247,12 +247,6 @@
 (deftest agent-workspace-feature-gating-test
   ;; Feature gates fire before routing, so we don't need a real workspace - just a valid-looking URL.
   (sso.test-setup/with-jwt-default-setup!
-    (testing "Returns 402 when :agent-api feature is not enabled"
-      (mt/with-additional-premium-features #{:workspaces}
-        (is (= 402 (:status (client/client-full-response :get 402 "agent/v1/workspace/1"
-                                                         {:request-options {:headers (auth-headers)}}))))))
-
     (testing "Returns 402 when :workspaces feature is not enabled"
-      (mt/with-additional-premium-features #{:agent-api}
-        (is (= 402 (:status (client/client-full-response :get 402 "agent/v1/workspace/1"
-                                                         {:request-options {:headers (auth-headers)}}))))))))
+      (is (= 402 (:status (client/client-full-response :get 402 "agent/v1/workspace/1"
+                                                       {:request-options {:headers (auth-headers)}})))))))

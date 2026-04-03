@@ -42,9 +42,6 @@
   development-mode?
   enable-tenants?
   enable-advanced-permissions?
-  enable-ai-entity-analysis?
-  enable-ai-sql-fixer?
-  enable-ai-sql-generation?
   enable-any-sso?
   enable-audit-app?
   enable-cache-granular-controls?
@@ -61,8 +58,6 @@
   enable-email-restrict-recipients?
   enable-embedding-sdk-origins?
   enable-embedding-simple-feature?
-  enable-llm-autodescription?
-  enable-metabot-v3?
   enable-official-collections?
   enable-preemptive-caching?
   enable-query-reference-validation?
@@ -78,7 +73,6 @@
   enable-sso-ldap?
   enable-sso-oidc?
   enable-sso-saml?
-  enable-sso-slack?
   enable-support-users?
   enable-basic-transforms?
   enable-python-transforms?
