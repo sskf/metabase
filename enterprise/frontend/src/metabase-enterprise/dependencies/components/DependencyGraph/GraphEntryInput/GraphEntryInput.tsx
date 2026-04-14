@@ -6,9 +6,9 @@ import { t } from "ttag";
 
 import type { EntityPickerProps } from "metabase/common/components/Pickers";
 import { trackDependencyEntitySelected } from "metabase/data-studio/analytics";
-import { useDispatch } from "metabase/lib/redux";
 import { Button, Card, FixedSizeIcon } from "metabase/ui";
 import type { IconName } from "metabase/ui/components/icons/Icon/icons";
+import { useDispatch } from "metabase/utils/redux";
 import type {
   DependencyEntry,
   DependencyNode,
