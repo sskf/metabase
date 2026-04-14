@@ -1,4 +1,9 @@
-import type { ErdEdge, ErdField, ErdNode, ErdResponse } from "metabase-types/api";
+import type {
+  ErdEdge,
+  ErdField,
+  ErdNode,
+  ErdResponse,
+} from "metabase-types/api";
 
 import { HEADER_HEIGHT, NODE_WIDTH, ROW_HEIGHT } from "./constants";
 import type { SchemaViewerFlowNode } from "./types";
@@ -144,10 +149,7 @@ describe("SchemaViewer utils", () => {
 
   describe("toFlowNode", () => {
     it("should transform ErdNode to SchemaViewerFlowNode with correct structure", () => {
-      const fields = [
-        createField(1, "id", "type/PK"),
-        createField(2, "name"),
-      ];
+      const fields = [createField(1, "id", "type/PK"), createField(2, "name")];
       const node = createNode(42, "users", fields);
       const flowNode = toFlowGraph({ nodes: [node], edges: [] }).nodes[0];
 
@@ -474,7 +476,9 @@ describe("SchemaViewer utils", () => {
       });
 
       // Nodes should have unique positions
-      const positions = positionedNodes.map((n) => `${n.position.x},${n.position.y}`);
+      const positions = positionedNodes.map(
+        (n) => `${n.position.x},${n.position.y}`,
+      );
       const uniquePositions = new Set(positions);
       expect(uniquePositions.size).toBe(2);
     });
@@ -590,10 +594,11 @@ describe("SchemaViewer utils", () => {
 
       // All 3 nodes should have unique positions
       expect(positionedNodes).toHaveLength(3);
-      const positions = positionedNodes.map((n) => `${n.position.x},${n.position.y}`);
+      const positions = positionedNodes.map(
+        (n) => `${n.position.x},${n.position.y}`,
+      );
       const uniquePositions = new Set(positions);
       expect(uniquePositions.size).toBe(3);
     });
-
   });
 });

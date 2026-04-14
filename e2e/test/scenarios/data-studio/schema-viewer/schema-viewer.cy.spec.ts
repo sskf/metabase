@@ -161,7 +161,6 @@ describe("scenarios > dependencies > Schema Viewer", () => {
     });
   });
 
-
   describe("layout", () => {
     it("should position nodes at unique locations and fit all in view", () => {
       cy.visit(`${SCHEMA_VIEWER_URL}?database-id=1&table-ids=${ORDERS_ID}`);
@@ -614,7 +613,9 @@ describe("scenarios > dependencies > Schema Viewer", () => {
       cy.intercept("GET", "/api/ee/dependencies/erd*").as("erdRequest");
 
       // Load both ORDERS and PRODUCTS so FK field can zoom to target
-      cy.visit(`${SCHEMA_VIEWER_URL}?database-id=1&table-ids=${ORDERS_ID},${PRODUCTS_ID}`);
+      cy.visit(
+        `${SCHEMA_VIEWER_URL}?database-id=1&table-ids=${ORDERS_ID},${PRODUCTS_ID}`,
+      );
       cy.wait("@erdRequest");
       getSchemaViewerCanvas().should("be.visible");
 

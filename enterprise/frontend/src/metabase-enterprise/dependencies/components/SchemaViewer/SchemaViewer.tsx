@@ -120,7 +120,10 @@ export function SchemaViewer({
   // Track the primary table ID (first explicitly selected table) for GraphEntryInput display.
   // This stays stable during FK expansion so the entry button shows the original selection.
   const [primaryTableId, setPrimaryTableId] = useState<ConcreteTableId | null>(
-    () => (initialTableIds != null && initialTableIds.length > 0 ? initialTableIds[0] : null),
+    () =>
+      initialTableIds != null && initialTableIds.length > 0
+        ? initialTableIds[0]
+        : null,
   );
 
   // Sync selectedTableIds when URL-driven props change (navigation via GraphEntryInput)
@@ -140,9 +143,10 @@ export function SchemaViewer({
         : null,
     );
     // Only update primary table when the first table changes (new picker selection)
-    const newPrimary = initialTableIds != null && initialTableIds.length > 0
-      ? initialTableIds[0]
-      : null;
+    const newPrimary =
+      initialTableIds != null && initialTableIds.length > 0
+        ? initialTableIds[0]
+        : null;
     if (newPrimary !== primaryTableId) {
       setPrimaryTableId(newPrimary);
     }
@@ -177,7 +181,11 @@ export function SchemaViewer({
     (tableId: TableId) => {
       if (selectedTableIds != null && databaseId != null) {
         const newTableIds = [...selectedTableIds, tableId as ConcreteTableId];
-        const url = Urls.dataStudioErdSchema(databaseId, schema ?? "", newTableIds);
+        const url = Urls.dataStudioErdSchema(
+          databaseId,
+          schema ?? "",
+          newTableIds,
+        );
         dispatch(push(url));
       }
     },
@@ -270,11 +278,9 @@ export function SchemaViewer({
       // Include database-id when known to avoid round-trip table lookup
       if ("type" in entry && entry.type === "table") {
         if (databaseId != null) {
-          return Urls.dataStudioErdSchema(
-            databaseId,
-            schema ?? "",
-            [entry.id as ConcreteTableId],
-          );
+          return Urls.dataStudioErdSchema(databaseId, schema ?? "", [
+            entry.id as ConcreteTableId,
+          ]);
         }
         return `${Urls.dataStudioErdBase()}?table-ids=${entry.id}`;
       }

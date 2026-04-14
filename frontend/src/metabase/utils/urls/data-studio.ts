@@ -295,7 +295,7 @@ export function dataStudioErdSchema(
   params.set("database-id", String(databaseId));
   params.set("schema", schema);
   if (tableIds != null && tableIds.length > 0) {
-    tableIds.forEach(id => params.append("table-ids", String(id)));
+    tableIds.forEach((id) => params.append("table-ids", String(id)));
   }
   return `${ROOT_URL}/schema-viewer?${params.toString()}`;
 }

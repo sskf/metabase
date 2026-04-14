@@ -25,7 +25,8 @@ export function initializePlugin() {
       getDataStudioDependencyDiagnosticsRoutes;
     PLUGIN_DEPENDENCIES.getDataStudioSchemaViewerRoutes =
       getDataStudioSchemaViewerRoutes;
-    PLUGIN_DEPENDENCIES.DatabaseSchemaViewerSection = DatabaseSchemaViewerSection;
+    PLUGIN_DEPENDENCIES.DatabaseSchemaViewerSection =
+      DatabaseSchemaViewerSection;
     PLUGIN_DEPENDENCIES.DependencyGraphPage = DependencyGraphPage;
     PLUGIN_DEPENDENCIES.CheckDependenciesForm = CheckDependenciesForm;
     PLUGIN_DEPENDENCIES.CheckDependenciesModal = CheckDependenciesModal;

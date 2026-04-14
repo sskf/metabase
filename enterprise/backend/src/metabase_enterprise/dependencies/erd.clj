@@ -151,9 +151,9 @@
    enabling the frontend to render expand buttons on edge FK fields."
   [fields-by-table field-by-id]
   (let [unknown-fk-ids (->> (mapcat val fields-by-table)
-                             (keep :fk_target_field_id)
-                             (remove field-by-id)
-                             set)]
+                            (keep :fk_target_field_id)
+                            (remove field-by-id)
+                            set)]
     (if (empty? unknown-fk-ids)
       field-by-id
       (let [target-fields (t2/select :model/Field
