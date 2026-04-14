@@ -10,9 +10,9 @@ import {
 } from "metabase/api";
 import { useUserKeyValue } from "metabase/common/hooks/use-user-key-value";
 import { usePageTitle } from "metabase/hooks/use-page-title";
-import { useDispatch } from "metabase/lib/redux";
-import * as Urls from "metabase/lib/urls";
 import { Stack } from "metabase/ui";
+import { useDispatch } from "metabase/utils/redux";
+import * as Urls from "metabase/utils/urls";
 import type { ConcreteTableId, DatabaseId } from "metabase-types/api";
 
 import { SchemaViewer } from "../../components/SchemaViewer";

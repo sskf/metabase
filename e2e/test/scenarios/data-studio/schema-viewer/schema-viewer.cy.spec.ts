@@ -354,8 +354,6 @@ describe("scenarios > dependencies > Schema Viewer", () => {
 
       // Toggle to a specific mode
       getCompactModeToggleButton().then(($button) => {
-        const initialTitle = $button.attr("title");
-
         // Click to change mode
         cy.wrap($button).click();
         cy.wait(300);
@@ -518,8 +516,6 @@ describe("scenarios > dependencies > Schema Viewer", () => {
 
       // Explicitly set full mode via button: toggle to compact, then back to full
       getCompactModeToggleButton().then(($btn) => {
-        const initialTitle = $btn.attr("title");
-
         // Click to toggle mode (either to compact or full)
         cy.wrap($btn).click();
         cy.wait(300);

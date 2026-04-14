@@ -14,8 +14,6 @@ import { t } from "ttag";
 import { skipToken } from "metabase/api";
 import { getErrorMessage } from "metabase/api/utils/errors";
 import type { EntityPickerProps } from "metabase/common/components/Pickers";
-import * as Urls from "metabase/lib/urls";
-import { useDispatch } from "metabase/lib/redux";
 import { AppSwitcher } from "metabase/nav/components/AppSwitcher";
 import {
   ActionIcon,
@@ -28,6 +26,8 @@ import {
   Tooltip,
   useColorScheme,
 } from "metabase/ui";
+import { useDispatch } from "metabase/utils/redux";
+import * as Urls from "metabase/utils/urls";
 import { useGetErdQuery } from "metabase-enterprise/api";
 import type {
   ConcreteTableId,
@@ -188,6 +188,7 @@ export function SchemaViewer({
     databaseId,
     schema,
     tableIds: selectedTableIds,
+    hops: 1,
   });
   const clipboard = useClipboard({ timeout: 2000 });
 

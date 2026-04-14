@@ -1,7 +1,7 @@
 import type { ErdEdge, ErdField, ErdNode, ErdResponse } from "metabase-types/api";
 
 import { HEADER_HEIGHT, NODE_WIDTH, ROW_HEIGHT } from "./constants";
-import type { SchemaViewerFlowEdge, SchemaViewerFlowNode } from "./types";
+import type { SchemaViewerFlowNode } from "./types";
 import { getNodeId, getNodesWithPositions, toFlowGraph } from "./utils";
 
 // Mock field helper for creating test fields
@@ -13,9 +13,11 @@ const createField = (
 ): ErdField => ({
   id,
   name,
+  display_name: name,
+  database_type: "VARCHAR",
   semantic_type: semanticType,
   fk_target_field_id: fkTargetFieldId,
-  base_type: "type/Text",
+  fk_target_table_id: null,
 });
 
 // Mock node helper
@@ -25,7 +27,9 @@ const createNode = (
   fields: ErdField[],
 ): ErdNode => ({
   table_id: tableId,
-  table_name: tableName,
+  name: tableName,
+  display_name: tableName,
+  db_id: 1,
   schema: "PUBLIC",
   fields,
   is_focal: false,
@@ -210,7 +214,7 @@ describe("SchemaViewer utils", () => {
       expect(flowEdge.sourceHandle).toBe("field-2");
       expect(flowEdge.targetHandle).toBe("field-4");
       expect(flowEdge.type).toBe("schemaViewerEdge");
-      expect(flowEdge.data.relationship).toBe("many-to-one");
+      expect(flowEdge.data?.relationship).toBe("many-to-one");
     });
 
     it("should handle self-referencing edges with right target handle", () => {
@@ -384,7 +388,9 @@ describe("SchemaViewer utils", () => {
         position: { x: 0, y: 0 },
         data: {
           table_id: 1,
-          table_name: "users",
+          name: "users",
+          display_name: "users",
+          db_id: 1,
           schema: "PUBLIC",
           fields,
           is_focal: false,
@@ -407,7 +413,9 @@ describe("SchemaViewer utils", () => {
         position: { x: 0, y: 0 },
         data: {
           table_id: 1,
-          table_name: "large_table",
+          name: "large_table",
+          display_name: "large_table",
+          db_id: 1,
           schema: "PUBLIC",
           fields,
           is_focal: false,
@@ -430,7 +438,9 @@ describe("SchemaViewer utils", () => {
           position: { x: 0, y: 0 },
           data: {
             table_id: 1,
-            table_name: "users",
+            name: "users",
+            display_name: "users",
+            db_id: 1,
             schema: "PUBLIC",
             fields: [],
             is_focal: false,
@@ -443,7 +453,9 @@ describe("SchemaViewer utils", () => {
           position: { x: 0, y: 0 },
           data: {
             table_id: 2,
-            table_name: "orders",
+            name: "orders",
+            display_name: "orders",
+            db_id: 1,
             schema: "PUBLIC",
             fields: [],
             is_focal: false,
@@ -474,7 +486,9 @@ describe("SchemaViewer utils", () => {
         position: { x: 0, y: 0 },
         data: {
           table_id: 1,
-          table_name: "users",
+          name: "users",
+          display_name: "users",
+          db_id: 1,
           schema: "PUBLIC",
           fields: [],
           is_focal: false,
@@ -501,7 +515,9 @@ describe("SchemaViewer utils", () => {
         position: { x: 0, y: 0 },
         data: {
           table_id: 1,
-          table_name: "users",
+          name: "users",
+          display_name: "users",
+          db_id: 1,
           schema: "PUBLIC",
           fields: [],
           is_focal: false,
@@ -524,7 +540,9 @@ describe("SchemaViewer utils", () => {
           position: { x: 0, y: 0 },
           data: {
             table_id: 1,
-            table_name: "users",
+            name: "users",
+            display_name: "users",
+            db_id: 1,
             schema: "PUBLIC",
             fields: [],
             is_focal: false,
@@ -537,7 +555,9 @@ describe("SchemaViewer utils", () => {
           position: { x: 0, y: 0 },
           data: {
             table_id: 2,
-            table_name: "orders",
+            name: "orders",
+            display_name: "orders",
+            db_id: 1,
             schema: "PUBLIC",
             fields: [],
             is_focal: false,
@@ -550,7 +570,9 @@ describe("SchemaViewer utils", () => {
           position: { x: 0, y: 0 },
           data: {
             table_id: 3,
-            table_name: "products",
+            name: "products",
+            display_name: "products",
+            db_id: 1,
             schema: "PUBLIC",
             fields: [],
             is_focal: false,
