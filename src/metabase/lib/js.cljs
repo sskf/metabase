@@ -60,6 +60,7 @@
    [clojure.string :as str]
    [goog.object :as gobject]
    [medley.core :as m]
+   [metabase.analytics.experiment]
    [metabase.analytics.impl]
    [metabase.analytics.interface :as analytics.interface]
    ^{:clj-kondo/ignore [:discouraged-namespace]} [metabase.legacy-mbql.normalize :as mbql.normalize]
@@ -98,8 +99,10 @@
 
 ;;; This ensures that all of metabase.lib.* is loaded, so all the `defmethod`s are properly registered.
 ;;; metabase.analytics.impl registers the CLJS reporter for [[metabase.analytics.interface]].
+;;; metabase.analytics.experiment wires the default experiment report fn.
 
 (comment lib.core/keep-me
+         metabase.analytics.experiment/keep-me
          metabase.analytics.impl/keep-me)
 
 ;; Expose for E2E testing
