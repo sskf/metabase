@@ -191,15 +191,15 @@ export function McpUiAppRoute() {
           console.error("[MCP] updateModelContext error", e);
         }
 
-        // Send a human-readable message. If the encoded query is already
-        // in context, use visualize_query — otherwise use construct_query
-        // with the description below.
+        // Use assertive phrasing so the LLM reliably acts on the injected
+        // context. "If you have" was conditional enough that the LLM often
+        // skipped the lookup entirely.
         await app.sendMessage({
           role: "user",
           content: [
             {
               type: "text",
-              text: `${label}: ${description}. If you have the encoded query in context, use it directly with visualize_query.`,
+              text: `${label}: ${description}. The encoded query has been added to your context — retrieve it and call visualize_query with it.`,
             },
           ],
         });
