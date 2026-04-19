@@ -44,7 +44,10 @@
   [& body]
   `(do-with-fallback-template (fn [] ~@body)))
 
-(defn- render-embed-mcp [vars]
+(defn render-embed-mcp-template
+  "Render the embed-mcp.html Mustache template with the given vars map.
+   Expected keys: :instanceUrl (JSON-encoded), :instanceUrlRaw, :sessionToken (JSON-encoded or nil)."
+  [vars]
   (cond
     (io/resource embed-mcp-template-path)
     (stencil/render-file embed-mcp-template-path vars)
@@ -144,7 +147,7 @@
   :render-fn   (fn [opts]
                  (let [site-url    (system/site-url)
                        session-key (:session-key opts)]
-                   (render-embed-mcp
+                   (render-embed-mcp-template
                     {:instanceUrl    (json/encode site-url)
                      :instanceUrlRaw site-url
                      :sessionToken   (when session-key (json/encode session-key))})))})

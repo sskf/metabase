@@ -9,6 +9,7 @@
    [metabase.appearance.core :as appearance]
    [metabase.config.core :as config]
    [metabase.initialization-status.core :as init-status]
+   [metabase.mcp.resources :as mcp.resources]
    [metabase.settings.core :as setting]
    [metabase.system.core :as system]
    [metabase.users.settings :as users-settings]
@@ -127,3 +128,16 @@
 (def public "/public index.html entrypoint." (partial entrypoint "public" :embeddable))
 (def embed  "/embed index.html entrypoint."  (partial entrypoint "embed"  :embeddable))
 (def embed-sdk  "/embed/sdk/v1 index.html entrypoint."  (partial entrypoint "embed-sdk"  :embeddable))
+
+(defn embed-mcp-dev
+  "Dev-only entrypoint for the MCP embed UI. Renders embed-mcp.html with the local
+   instance URL and no session token so it can be loaded directly in a browser for
+   development without requiring a running MCP host."
+  [_request respond _raise]
+  {:pre [config/is-dev?]}
+  (respond
+   (-> (response/response (mcp.resources/render-embed-mcp-template
+                           {:instanceUrl    (json/encode (system/site-url))
+                            :instanceUrlRaw (system/site-url)
+                            :sessionToken   nil}))
+       (response/content-type "text/html; charset=utf-8"))))

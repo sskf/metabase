@@ -6,11 +6,31 @@ import { getSdkStore } from "embedding-sdk-bundle/store";
 import { refreshSiteSettings } from "metabase/redux/settings";
 import { refreshCurrentUser } from "metabase/redux/user";
 import type { ResolvedColorScheme } from "metabase/utils/color-scheme";
-import { b64_to_utf8 } from "metabase/utils/encoding";
+import { b64_to_utf8, utf8_to_b64 } from "metabase/utils/encoding";
 import type { Card } from "metabase-types/api";
 
 import { useMcpApp } from "./hooks/useMcpApp";
 import { buildMcpAppsTheme } from "./utils/buildMcpAppsTheme";
+
+// Drills that zoom/refine the current visualization — they stay "the same thing".
+// Everything else navigates to a conceptually new entity and should be intercepted.
+const STAY_DRILLS = new Set([
+  "zoom",
+  "zoom-in.binning",
+  "zoom-in.timeseries",
+  "zoom-in.geographic",
+]);
+
+// Human-readable labels for GO drills, shown as the user-facing message in chat.
+const DRILL_LABELS: Record<string, string> = {
+  "underlying-records": "Show the underlying records",
+  pk: "Show details for this row",
+  "fk-details": "Show details for this row",
+  "breakout-by": "Break this down further",
+  distribution: "Show the distribution",
+  "summarize-column": "Summarize this column",
+  "summarize-column-by-time": "Summarize this column over time",
+};
 
 const store = getSdkStore();
 
@@ -22,7 +42,7 @@ const SimpleLoader = () => (
 );
 
 export function McpUiAppRoute() {
-  const { query, hostContext } = useMcpApp();
+  const { query, hostContext, app } = useMcpApp();
 
   const [isSettingsReady, setIsSettingsReady] = useState(false);
 
@@ -115,6 +135,66 @@ export function McpUiAppRoute() {
           // we should never show query builder in chat interfaces
           withEditorButton={false}
           height="500px"
+          onDrillThrough={async (
+            { drillName, nextCard, description },
+            defaultNavigate,
+          ) => {
+            // eslint-disable-next-line no-console
+            console.log("[MCP] onDrillThrough", { drillName, app: !!app });
+
+            if (STAY_DRILLS.has(drillName ?? "")) {
+              // eslint-disable-next-line no-console
+              console.log("[MCP] STAY drill — navigating in place");
+
+              await defaultNavigate();
+            } else if (app) {
+              try {
+                const label =
+                  DRILL_LABELS[drillName ?? ""] ?? "Show more details";
+
+                const encodedQuery = utf8_to_b64(
+                  JSON.stringify(nextCard.dataset_query),
+                );
+
+                // Inject the encoded query as model context so the LLM can
+                // call visualize_query directly without it appearing in chat.
+                try {
+                  await app.updateModelContext({
+                    content: [
+                      {
+                        type: "text",
+                        text: `Drill-through encoded query (use this with visualize_query if available): ${encodedQuery}`,
+                      },
+                    ],
+                  });
+                  // eslint-disable-next-line no-console
+                  console.log(
+                    "[MCP] updateModelContext injected encoded query",
+                  );
+                } catch (e) {
+                  console.error("[MCP] updateModelContext error", e);
+                }
+
+                // Send a human-readable message. If the encoded query is already
+                // in context, use visualize_query — otherwise use construct_query
+                // with the description below.
+                await app.sendMessage({
+                  role: "user",
+                  content: [
+                    {
+                      type: "text",
+                      text: `${label}: ${description}. If you have the encoded query in context, use it directly with visualize_query.`,
+                    },
+                  ],
+                });
+              } catch (e) {
+                console.error("[MCP] sendMessage error", e);
+              }
+            } else {
+              // eslint-disable-next-line no-console
+              console.log("[MCP] GO drill — no app instance (dev mode)");
+            }
+          }}
         />
       </div>
     </ComponentProvider>
