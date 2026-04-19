@@ -12,25 +12,54 @@ import type { Card } from "metabase-types/api";
 import { useMcpApp } from "./hooks/useMcpApp";
 import { buildMcpAppsTheme } from "./utils/buildMcpAppsTheme";
 
-// Drills that zoom/refine the current visualization — they stay "the same thing".
-// Everything else navigates to a conceptually new entity and should be intercepted.
-const STAY_DRILLS = new Set([
+// Drills that refine the current visualization without changing what it IS.
+// The chart's conceptual "title" stays the same — zoom, granularity, ordering.
+// Prefix-matched: e.g. "sort" matches both "sort.ascending" and "sort.descending".
+const STAY_DRILL_PREFIXES = [
   "zoom",
   "zoom-in.binning",
   "zoom-in.timeseries",
   "zoom-in.geographic",
-  "drill-thru/sort",
-]);
+  "sort",
+];
 
-// Human-readable labels for GO drills, shown as the user-facing message in chat.
+const isStayDrill = (drillName: string | undefined) =>
+  drillName != null &&
+  STAY_DRILL_PREFIXES.some(
+    (prefix) => drillName === prefix || drillName.startsWith(`${prefix}.`),
+  );
+
+// Human-readable labels for GO drills — drills that produce a conceptually
+// different chart (one with a different title). Prefix-matched.
 const DRILL_LABELS: Record<string, string> = {
   "underlying-records": "Show the underlying records",
   pk: "Show details for this row",
   "fk-details": "Show details for this row",
+  "fk-filter": "Filter by this value",
+  "quick-filter": "Filter by this value",
+  "column-filter": "Filter by this column",
   "breakout-by": "Break this down further",
+  pivot: "Break this down further",
   distribution: "Show the distribution",
-  "summarize-column": "Summarize this column",
   "summarize-column-by-time": "Summarize this column over time",
+  "summarize-column": "Summarize this column",
+  extract: "Extract this column",
+  combine: "Combine these columns",
+  "automatic-insights": "Show automatic insights",
+};
+
+const getDrillLabel = (drillName: string | undefined): string => {
+  if (!drillName) {
+    return "Show more details";
+  }
+  // Exact match first, then prefix match (e.g. "quick-filter.=" → "quick-filter")
+  if (DRILL_LABELS[drillName]) {
+    return DRILL_LABELS[drillName];
+  }
+  const prefix = Object.keys(DRILL_LABELS).find((key) =>
+    drillName.startsWith(`${key}.`),
+  );
+  return prefix ? DRILL_LABELS[prefix] : "Show more details";
 };
 
 const store = getSdkStore();
@@ -143,15 +172,14 @@ export function McpUiAppRoute() {
             // eslint-disable-next-line no-console
             console.log("[MCP] onDrillThrough", { drillName, app: !!app });
 
-            if (STAY_DRILLS.has(drillName ?? "")) {
+            if (isStayDrill(drillName)) {
               // eslint-disable-next-line no-console
               console.log("[MCP] STAY drill — navigating in place");
 
               await defaultNavigate();
             } else if (app) {
               try {
-                const label =
-                  DRILL_LABELS[drillName ?? ""] ?? "Show more details";
+                const label = getDrillLabel(drillName);
 
                 const encodedQuery = utf8_to_b64(
                   JSON.stringify(nextCard.dataset_query),
