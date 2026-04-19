@@ -5,10 +5,12 @@ import { SdkQuestion } from "embedding-sdk-bundle/components/public/SdkQuestion"
 import { getSdkStore } from "embedding-sdk-bundle/store";
 import { refreshSiteSettings } from "metabase/redux/settings";
 import { refreshCurrentUser } from "metabase/redux/user";
+import { Flex } from "metabase/ui";
 import type { ResolvedColorScheme } from "metabase/utils/color-scheme";
 import { b64_to_utf8, utf8_to_b64 } from "metabase/utils/encoding";
 import type { Card } from "metabase-types/api";
 
+import { McpQueryBar } from "./McpQueryBar";
 import { useMcpApp } from "./hooks/useMcpApp";
 import { buildMcpAppsTheme } from "./utils/buildMcpAppsTheme";
 
@@ -100,7 +102,7 @@ export function McpUiAppRoute() {
 
     try {
       return {
-        display: "table",
+        display: "line",
         dataset_query: JSON.parse(b64_to_utf8(query)),
         visualization_settings: {},
       } as Card;
@@ -142,6 +144,8 @@ export function McpUiAppRoute() {
     boxSizing: "border-box",
     backgroundColor: theme.colors?.background,
     height: "500px",
+    display: "flex",
+    flexDirection: "column",
 
     // Apply safe area insets from the host environment.
     padding: `${Math.max(safeAreaInsets.top, 0)}px ${Math.max(safeAreaInsets.right, 0)}px ${Math.max(safeAreaInsets.bottom, 0)}px ${Math.max(safeAreaInsets.left, 0)}px`,
@@ -150,6 +154,63 @@ export function McpUiAppRoute() {
   if (!isReady) {
     return null;
   }
+
+  const onDrillThrough: NonNullable<
+    React.ComponentProps<typeof SdkQuestion>["onDrillThrough"]
+  > = async ({ drillName, nextCard, description }, defaultNavigate) => {
+    // eslint-disable-next-line no-console
+    console.log("[MCP] onDrillThrough", { drillName, app: !!app });
+
+    if (isStayDrill(drillName)) {
+      // eslint-disable-next-line no-console
+      console.log("[MCP] STAY drill — navigating in place");
+
+      await defaultNavigate();
+    } else if (app) {
+      try {
+        const label = getDrillLabel(drillName);
+
+        const encodedQuery = utf8_to_b64(
+          JSON.stringify(nextCard.dataset_query),
+        );
+
+        // Inject the encoded query as model context so the LLM can
+        // call visualize_query directly without it appearing in chat.
+        try {
+          await app.updateModelContext({
+            content: [
+              {
+                type: "text",
+                text: `Drill-through encoded query (use this with visualize_query if available): ${encodedQuery}`,
+              },
+            ],
+          });
+          // eslint-disable-next-line no-console
+          console.log("[MCP] updateModelContext injected encoded query");
+        } catch (e) {
+          console.error("[MCP] updateModelContext error", e);
+        }
+
+        // Send a human-readable message. If the encoded query is already
+        // in context, use visualize_query — otherwise use construct_query
+        // with the description below.
+        await app.sendMessage({
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `${label}: ${description}. If you have the encoded query in context, use it directly with visualize_query.`,
+            },
+          ],
+        });
+      } catch (e) {
+        console.error("[MCP] sendMessage error", e);
+      }
+    } else {
+      // eslint-disable-next-line no-console
+      console.log("[MCP] GO drill — no app instance (dev mode)");
+    }
+  };
 
   return (
     <ComponentProvider
@@ -164,67 +225,18 @@ export function McpUiAppRoute() {
           isSaveEnabled={false}
           // we should never show query builder in chat interfaces
           withEditorButton={false}
-          height="500px"
-          onDrillThrough={async (
-            { drillName, nextCard, description },
-            defaultNavigate,
-          ) => {
-            // eslint-disable-next-line no-console
-            console.log("[MCP] onDrillThrough", { drillName, app: !!app });
-
-            if (isStayDrill(drillName)) {
-              // eslint-disable-next-line no-console
-              console.log("[MCP] STAY drill — navigating in place");
-
-              await defaultNavigate();
-            } else if (app) {
-              try {
-                const label = getDrillLabel(drillName);
-
-                const encodedQuery = utf8_to_b64(
-                  JSON.stringify(nextCard.dataset_query),
-                );
-
-                // Inject the encoded query as model context so the LLM can
-                // call visualize_query directly without it appearing in chat.
-                try {
-                  await app.updateModelContext({
-                    content: [
-                      {
-                        type: "text",
-                        text: `Drill-through encoded query (use this with visualize_query if available): ${encodedQuery}`,
-                      },
-                    ],
-                  });
-                  // eslint-disable-next-line no-console
-                  console.log(
-                    "[MCP] updateModelContext injected encoded query",
-                  );
-                } catch (e) {
-                  console.error("[MCP] updateModelContext error", e);
-                }
-
-                // Send a human-readable message. If the encoded query is already
-                // in context, use visualize_query — otherwise use construct_query
-                // with the description below.
-                await app.sendMessage({
-                  role: "user",
-                  content: [
-                    {
-                      type: "text",
-                      text: `${label}: ${description}. If you have the encoded query in context, use it directly with visualize_query.`,
-                    },
-                  ],
-                });
-              } catch (e) {
-                console.error("[MCP] sendMessage error", e);
-              }
-            } else {
-              // eslint-disable-next-line no-console
-              console.log("[MCP] GO drill — no app instance (dev mode)");
-            }
-          }}
-        />
+          withChartTypeSelector={false}
+          onDrillThrough={onDrillThrough}
+        >
+          {/* Visualization fills the remaining space */}
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+            <SdkQuestion.QuestionVisualization height="calc(500px - 4rem)" />
+          </div>
+          {/* Metric-viewer-style query bar: chart type + time granularity */}
+          <Flex justify="center" py="xs" style={{ flexShrink: 0 }}>
+            <McpQueryBar />
+          </Flex>
+        </SdkQuestion>
       </div>
     </ComponentProvider>
   );
