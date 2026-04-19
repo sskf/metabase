@@ -19,6 +19,7 @@ const STAY_DRILLS = new Set([
   "zoom-in.binning",
   "zoom-in.timeseries",
   "zoom-in.geographic",
+  "drill-thru/sort",
 ]);
 
 // Human-readable labels for GO drills, shown as the user-facing message in chat.
