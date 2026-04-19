@@ -174,8 +174,9 @@ export function McpUiAppRoute() {
           JSON.stringify(nextCard.dataset_query),
         );
 
-        // Inject the encoded query as model context so the LLM can
-        // call visualize_query directly without it appearing in chat.
+        // Inject the encoded query as model context — both as human-readable
+        // content and as structuredContent (machine-readable, potentially
+        // treated differently by clients that defer text content).
         try {
           await app.updateModelContext({
             content: [
@@ -184,6 +185,7 @@ export function McpUiAppRoute() {
                 text: `Drill-through encoded query (use this with visualize_query if available): ${encodedQuery}`,
               },
             ],
+            structuredContent: { encodedQuery },
           });
           // eslint-disable-next-line no-console
           console.log("[MCP] updateModelContext injected encoded query");
