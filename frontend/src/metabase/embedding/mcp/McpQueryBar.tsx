@@ -2,6 +2,14 @@ import { useState } from "react";
 import { t } from "ttag";
 
 import { useSdkQuestionContext } from "embedding-sdk-bundle/components/private/SdkQuestion/context";
+import { DatePicker } from "metabase/querying/common/components/DatePicker";
+import type { DatePickerValue } from "metabase/querying/common/types";
+import { getDateFilterDisplayName } from "metabase/querying/common/utils/dates";
+import {
+  getDateFilterClause,
+  getDatePickerUnits,
+  getDatePickerValue,
+} from "metabase/querying/filters/utils/dates";
 import {
   ActionIcon,
   Box,
@@ -30,6 +38,7 @@ function isMcpChartType(type: string): type is McpChartType {
 export function McpQueryBar() {
   const { question, updateQuestion } = useSdkQuestionContext();
   const [isBucketOpen, setIsBucketOpen] = useState(false);
+  const [isDateFilterOpen, setIsDateFilterOpen] = useState(false);
 
   if (!question) {
     return null;
@@ -61,6 +70,12 @@ export function McpQueryBar() {
       break;
     }
   }
+
+  // Strip the temporal bucket from the column — date filters operate on the
+  // raw date column, not the bucketed version used in the breakout.
+  const rawTemporalColumn = temporalColumn
+    ? Lib.withTemporalBucket(temporalColumn, null)
+    : null;
 
   const currentBucket = temporalColumn
     ? Lib.temporalBucket(temporalColumn)
@@ -99,6 +114,50 @@ export function McpQueryBar() {
     ? t`by ${Lib.describeTemporalUnit(currentUnit).toLowerCase()}`
     : t`All time`;
 
+  // --- Date range filter ---
+  // Find the first date filter in the current query (the one we manage).
+  const allFilters = Lib.filters(query, stageIndex);
+  let dateFilterClause: Lib.FilterClause | null = null;
+  let dateFilterValue: DatePickerValue | undefined = undefined;
+
+  for (const f of allFilters) {
+    const value = getDatePickerValue(query, stageIndex, f);
+    if (value != null) {
+      dateFilterClause = f;
+      dateFilterValue = value;
+      break;
+    }
+  }
+
+  const dateFilterLabel = dateFilterValue
+    ? getDateFilterDisplayName(dateFilterValue)
+    : t`All time`;
+
+  const datePickerUnits = rawTemporalColumn
+    ? getDatePickerUnits(query, stageIndex, rawTemporalColumn)
+    : [];
+
+  const handleDateFilterChange = (value: DatePickerValue) => {
+    if (!rawTemporalColumn) {
+      return;
+    }
+    const newFilterClause = getDateFilterClause(rawTemporalColumn, value);
+    const newQuery = dateFilterClause
+      ? Lib.replaceClause(query, stageIndex, dateFilterClause, newFilterClause)
+      : Lib.filter(query, stageIndex, newFilterClause);
+    updateQuestion(question.setQuery(newQuery), { run: true });
+    setIsDateFilterOpen(false);
+  };
+
+  const handleDateFilterClear = () => {
+    if (!dateFilterClause) {
+      return;
+    }
+    const newQuery = Lib.removeClause(query, stageIndex, dateFilterClause);
+    updateQuestion(question.setQuery(newQuery), { run: true });
+    setIsDateFilterOpen(false);
+  };
+
   return (
     <Flex
       maw="100%"
@@ -130,6 +189,61 @@ export function McpQueryBar() {
         ))}
       </Flex>
 
+      {/* Date range filter — only shown when the query has a temporal breakout */}
+      {rawTemporalColumn && (
+        <>
+          <Divider
+            orientation="vertical"
+            mx="xs"
+            style={{ borderColor: "var(--mb-color-border)" }}
+          />
+          <Popover opened={isDateFilterOpen} onChange={setIsDateFilterOpen}>
+            <Popover.Target>
+              <Button
+                w={160}
+                justify="space-between"
+                fw="bold"
+                py="xs"
+                px="sm"
+                variant="subtle"
+                color="text-primary"
+                rightSection={<Icon name="chevrondown" size={12} />}
+                onClick={() => setIsDateFilterOpen(!isDateFilterOpen)}
+              >
+                {dateFilterLabel}
+              </Button>
+            </Popover.Target>
+            <Popover.Dropdown>
+              <DatePicker
+                value={dateFilterValue}
+                availableUnits={datePickerUnits}
+                onChange={handleDateFilterChange}
+                renderSubmitButton={({ value }) => (
+                  <Flex justify="space-between" w="100%">
+                    {dateFilterClause ? (
+                      <Button
+                        variant="subtle"
+                        c="text-secondary"
+                        onClick={handleDateFilterClear}
+                      >
+                        {t`All time`}
+                      </Button>
+                    ) : (
+                      <div />
+                    )}
+                    <Button
+                      type="submit"
+                      variant="filled"
+                      disabled={!value}
+                    >{t`Apply`}</Button>
+                  </Flex>
+                )}
+              />
+            </Popover.Dropdown>
+          </Popover>
+        </>
+      )}
+
       {/* Temporal bucket picker — only shown when the query has a temporal breakout */}
       {temporalColumn && availableItems.length > 0 && (
         <>
@@ -141,7 +255,7 @@ export function McpQueryBar() {
           <Popover opened={isBucketOpen} onChange={setIsBucketOpen}>
             <Popover.Target>
               <Button
-                w={160}
+                w={120}
                 justify="space-between"
                 fw="bold"
                 py="xs"
