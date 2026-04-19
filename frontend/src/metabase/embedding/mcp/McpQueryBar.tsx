@@ -20,6 +20,7 @@ import {
   Flex,
   Icon,
   Popover,
+  Text,
 } from "metabase/ui";
 import * as Lib from "metabase-lib";
 import type { TemporalUnit } from "metabase-types/api";
@@ -308,5 +309,60 @@ export function McpQueryBar() {
         </>
       )}
     </Flex>
+  );
+}
+
+/**
+ * Renders a minimal question title without temporal bucket suffixes.
+ * e.g. "Sum of Total by Created At" instead of "Sum of Total by Created At: Month".
+ * Returns null when the query has no aggregations or breakouts.
+ */
+export function McpQuestionTitle() {
+  const { question } = useSdkQuestionContext();
+
+  if (!question) {
+    return null;
+  }
+
+  const query = question.query();
+  const stageIndex = -1;
+
+  const aggregations = Lib.aggregations(query, stageIndex);
+  const breakouts = Lib.breakouts(query, stageIndex);
+
+  if (aggregations.length === 0 && breakouts.length === 0) {
+    return null;
+  }
+
+  const aggregationNames = aggregations
+    .map((a) => Lib.displayInfo(query, stageIndex, a).displayName)
+    .join(", ");
+
+  const breakoutNames = breakouts
+    .flatMap((b) => {
+      const column = Lib.breakoutColumn(query, stageIndex, b);
+
+      if (!column) {
+        return [];
+      }
+
+      // Strip temporal bucket so we get "Created At" not "Created At: Month"
+      const unbucketed = Lib.withTemporalBucket(column, null);
+      const { displayName } = Lib.displayInfo(query, stageIndex, unbucketed);
+
+      return [displayName];
+    })
+    .join(", ");
+
+  const title = [aggregationNames, breakoutNames].filter(Boolean).join(" by ");
+
+  if (!title) {
+    return null;
+  }
+
+  return (
+    <Text fw={700} fz="sm" px="md" pt="sm" truncate>
+      {title}
+    </Text>
   );
 }

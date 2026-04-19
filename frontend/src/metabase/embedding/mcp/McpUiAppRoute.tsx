@@ -10,7 +10,7 @@ import type { ResolvedColorScheme } from "metabase/utils/color-scheme";
 import { b64_to_utf8, utf8_to_b64 } from "metabase/utils/encoding";
 import type { Card } from "metabase-types/api";
 
-import { McpQueryBar } from "./McpQueryBar";
+import { McpQueryBar, McpQuestionTitle } from "./McpQueryBar";
 import { useMcpApp } from "./hooks/useMcpApp";
 import { buildMcpAppsTheme } from "./utils/buildMcpAppsTheme";
 
@@ -230,9 +230,11 @@ export function McpUiAppRoute() {
           withChartTypeSelector={false}
           onDrillThrough={onDrillThrough}
         >
+          {/* Minimal title: "Sum of Total by Created At" (no temporal bucket suffix) */}
+          <McpQuestionTitle />
           {/* Visualization fills the remaining space */}
           <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-            <SdkQuestion.QuestionVisualization height="calc(500px - 4rem)" />
+            <SdkQuestion.QuestionVisualization height="calc(500px - 6rem)" />
           </div>
           {/* Metric-viewer-style query bar: chart type + time granularity */}
           <Flex justify="center" py="xs" style={{ flexShrink: 0 }}>
