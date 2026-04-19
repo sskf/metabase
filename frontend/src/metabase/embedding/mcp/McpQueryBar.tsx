@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { t } from "ttag";
 
 import { useSdkQuestionContext } from "embedding-sdk-bundle/components/private/SdkQuestion/context";
+import { getSensibleVisualizations } from "metabase/query_builder/components/chart-type-selector";
 import { DatePicker } from "metabase/querying/common/components/DatePicker";
 import type { DatePickerValue } from "metabase/querying/common/types";
 import { getDateFilterDisplayName } from "metabase/querying/common/utils/dates";
@@ -36,11 +37,24 @@ function isMcpChartType(type: string): type is McpChartType {
 }
 
 export function McpQueryBar() {
-  const { question, updateQuestion } = useSdkQuestionContext();
+  const { question, updateQuestion, queryResults } = useSdkQuestionContext();
   const [isBucketOpen, setIsBucketOpen] = useState(false);
   const [isDateFilterOpen, setIsDateFilterOpen] = useState(false);
 
-  if (!question) {
+  // Recompute whenever results change (unlike useSensibleVisualizations which
+  // locks to the initial result via useRef).
+  const { sensibleVisualizations } = useMemo(
+    () => getSensibleVisualizations({ result: queryResults?.[0] ?? null }),
+    [queryResults],
+  );
+
+  // Hide the bar entirely when results haven't loaded yet, or when none of
+  // line/bar/area are sensible for this query shape.
+  const sensibleChartTypes = CHART_TYPES.filter(({ type }) =>
+    sensibleVisualizations.includes(type),
+  );
+
+  if (!question || !queryResults || sensibleChartTypes.length === 0) {
     return null;
   }
 
@@ -48,10 +62,11 @@ export function McpQueryBar() {
   const stageIndex = -1;
 
   // --- Chart type ---
+
   const rawDisplay = question.display();
-  const selectedChartType: McpChartType = isMcpChartType(rawDisplay)
+  const selectedChartType: McpChartType | null = isMcpChartType(rawDisplay)
     ? rawDisplay
-    : "line";
+    : null;
 
   const handleDisplayChange = (type: McpChartType) => {
     updateQuestion(question.setDisplay(type).lockDisplay(), { run: false });
@@ -172,7 +187,7 @@ export function McpQueryBar() {
     >
       {/* Chart type buttons */}
       <Flex gap="xs" bg="background-secondary" p="xs" bdrs="md">
-        {CHART_TYPES.map(({ type, icon }) => (
+        {sensibleChartTypes.map(({ type, icon }) => (
           <ActionIcon
             key={type}
             w="2rem"

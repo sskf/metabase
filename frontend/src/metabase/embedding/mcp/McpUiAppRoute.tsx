@@ -102,7 +102,7 @@ export function McpUiAppRoute() {
 
     try {
       return {
-        display: "line",
+        display: "table",
         dataset_query: JSON.parse(b64_to_utf8(query)),
         visualization_settings: {},
       } as Card;
