@@ -1,3 +1,4 @@
+/* eslint-disable metabase/no-literal-metabase-strings -- no whitelabel in mcp */
 import { type CSSProperties, useEffect, useMemo, useState } from "react";
 
 import { ComponentProvider } from "embedding-sdk-bundle/components/public/ComponentProvider";
@@ -13,6 +14,28 @@ import type { Card } from "metabase-types/api";
 import { McpQueryBar, McpQuestionTitle } from "./McpQueryBar";
 import { useMcpApp } from "./hooks/useMcpApp";
 import { buildMcpAppsTheme } from "./utils/buildMcpAppsTheme";
+
+/**
+ * Store a base64-encoded query in the MCP session's pending card slot.
+ * The render_drill_through tool will consume it when the LLM calls it.
+ * This is universal — works in all MCP clients (Claude Desktop, Cursor, VS Code).
+ */
+async function storePendingCard(encodedQuery: string): Promise<void> {
+  const { instanceUrl, sessionToken } = window.metabaseConfig ?? {};
+
+  const res = await fetch(`${instanceUrl}/api/mcp`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Metabase-Session": sessionToken ?? "",
+    },
+    body: JSON.stringify({ encodedQuery }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`storePendingCard failed: ${res.status} ${res.statusText}`);
+  }
+}
 
 // Drills that refine the current visualization without changing what it IS.
 // The chart's conceptual "title" stays the same — zoom, granularity, ordering.
@@ -30,39 +53,6 @@ const isStayDrill = (drillName: string | undefined) =>
   STAY_DRILL_PREFIXES.some(
     (prefix) => drillName === prefix || drillName.startsWith(`${prefix}.`),
   );
-
-// Human-readable labels for GO drills — drills that produce a conceptually
-// different chart (one with a different title). Prefix-matched.
-const DRILL_LABELS: Record<string, string> = {
-  "underlying-records": "Show the underlying records",
-  pk: "Show details for this row",
-  "fk-details": "Show details for this row",
-  "fk-filter": "Filter by this value",
-  "quick-filter": "Filter by this value",
-  "column-filter": "Filter by this column",
-  "breakout-by": "Break this down further",
-  pivot: "Break this down further",
-  distribution: "Show the distribution",
-  "summarize-column-by-time": "Summarize this column over time",
-  "summarize-column": "Summarize this column",
-  extract: "Extract this column",
-  combine: "Combine these columns",
-  "automatic-insights": "Show automatic insights",
-};
-
-const getDrillLabel = (drillName: string | undefined): string => {
-  if (!drillName) {
-    return "Show more details";
-  }
-  // Exact match first, then prefix match (e.g. "quick-filter.=" → "quick-filter")
-  if (DRILL_LABELS[drillName]) {
-    return DRILL_LABELS[drillName];
-  }
-  const prefix = Object.keys(DRILL_LABELS).find((key) =>
-    drillName.startsWith(`${key}.`),
-  );
-  return prefix ? DRILL_LABELS[prefix] : "Show more details";
-};
 
 const store = getSdkStore();
 
@@ -157,7 +147,7 @@ export function McpUiAppRoute() {
 
   const onDrillThrough: NonNullable<
     React.ComponentProps<typeof SdkQuestion>["onDrillThrough"]
-  > = async ({ drillName, nextCard, description }, defaultNavigate) => {
+  > = async ({ drillName, nextCard }, defaultNavigate) => {
     // eslint-disable-next-line no-console
     console.log("[MCP] onDrillThrough", { drillName, app: !!app });
 
@@ -168,40 +158,28 @@ export function McpUiAppRoute() {
       await defaultNavigate();
     } else if (app) {
       try {
-        const label = getDrillLabel(drillName);
-
         const encodedQuery = utf8_to_b64(
           JSON.stringify(nextCard.dataset_query),
         );
 
-        // Inject the encoded query as model context — both as human-readable
-        // content and as structuredContent (machine-readable, potentially
-        // treated differently by clients that defer text content).
+        // Store the card server-side in the MCP session. This is universal —
+        // works in all MCP clients (Claude Desktop, Cursor, VS Code).
+        // The render_drill_through tool will consume it with no LLM-visible payload.
         try {
-          await app.updateModelContext({
-            content: [
-              {
-                type: "text",
-                text: `Drill-through encoded query (use this with visualize_query if available): ${encodedQuery}`,
-              },
-            ],
-            structuredContent: { encodedQuery },
-          });
+          await storePendingCard(encodedQuery);
           // eslint-disable-next-line no-console
-          console.log("[MCP] updateModelContext injected encoded query");
+          console.log("[MCP] stored pending card for render_drill_through");
         } catch (e) {
-          console.error("[MCP] updateModelContext error", e);
+          console.error("[MCP] storePendingCard error", e);
         }
 
-        // Use assertive phrasing so the LLM reliably acts on the injected
-        // context. "If you have" was conditional enough that the LLM often
-        // skipped the lookup entirely.
+        // Ask the LLM to call render_drill_through — no context in the message.
         await app.sendMessage({
           role: "user",
           content: [
             {
               type: "text",
-              text: `${label}: ${description}. The encoded query has been added to your context — retrieve it and call visualize_query with it.`,
+              text: "Call the render_drill_through tool.",
             },
           ],
         });
