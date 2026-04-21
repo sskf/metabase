@@ -146,6 +146,30 @@
                                                                    :error "boom"}}}}}
               (score-entities es embedder 2))))))
 
+(deftest ^:parallel semantic-dim-singleton-and-edge-density-regression-test
+  (testing "a singleton graph reports one component and zero-valued graph ratios"
+    (let [es       [(entity :name "only")]
+          embedder (mock-embedder {"only" [1.0 0.0 0.0]})]
+      (is (=? {:dimensions
+               {:semantic
+                {:variables {:synonym-pairs             {:value 0 :score 0}
+                             :synonym-edge-density      {:value 0.0}
+                             :synonym-components        {:value 1}
+                             :synonym-largest-component {:value 1}
+                             :synonym-avg-degree        {:value 0.0}
+                             :synonym-degree-summary    {:value {:p50 0 :p90 0 :max 0}}}}}}
+              (score-entities es embedder 2)))))
+  (testing "edge density uses |E| / |V| * 100"
+    (let [es       [(entity :name "a") (entity :name "b") (entity :name "c") (entity :name "d")]
+          embedder (mock-embedder {"a" [1.0 0.0]
+                                   "b" [0.95 0.05]
+                                   "c" [0.94 0.06]
+                                   "d" [0.0 1.0]})
+          result   (score-entities es embedder 2)]
+      (is (= 3 (get-in result [:dimensions :semantic :variables :synonym-pairs :value])))
+      (is (= 75.0 (get-in result [:dimensions :semantic :variables :synonym-edge-density :value])))
+      (is (= 1.5 (get-in result [:dimensions :semantic :variables :synonym-avg-degree :value]))))))
+
 (deftest ^:parallel metadata-dim-test
   (testing "description-coverage counts entities whose description is ≥ 20 chars"
     (let [es [(entity :name "a" :description "A curated fact table for orders.")
@@ -410,6 +434,12 @@
        (map :data)
        (filter #(= "semantic_complexity_scored" (get % "event")))))
 
+(defn- raw-complexity-events []
+  (->> @snowplow-test/*snowplow-collector*
+       (map #(get-in % [:properties "data"]))
+       (filter #(= "iglu:com.metabase/semantic_complexity/jsonschema/2-0-0"
+                   (get % "schema")))))
+
 (deftest ^:sequential emit-snowplow-publishes-totals-and-variables-test
   (testing "one event per catalog-total + one per (catalog × dimension × variable)"
     (snowplow-test/with-fake-snowplow-collector
@@ -474,6 +504,60 @@
           (is (= "embedder boom" (get-in by-axis ["synonym_pairs" "error"])))
           (is (not-any? #(contains? % "error")
                         (vals (dissoc by-axis "synonym_pairs")))))))))
+
+(deftest ^:sequential emit-snowplow-schema-2-0-0-payload-shape-test
+  (snowplow-test/with-fake-snowplow-collector
+    (doseq [level [0 1]]
+      (testing (format "level %d events match schema 2-0-0 payload expectations" level)
+        (snowplow-test/pop-event-data-and-user-id!)
+        (let [result (complexity/score-from-entities
+                      (catalog [(entity :name "orders" :field-count 2)
+                                (entity :name "orders" :field-count 0)]
+                               2)
+                      (catalog [(entity :name "facts"
+                                        :description "A long enough description for coverage.")]
+                               1)
+                      nil
+                      {:level level})]
+          (#'complexity/emit-snowplow! result)
+          (let [raw-events            (raw-complexity-events)
+                events                (complexity-events!)
+                total                 (first (filter #(and (= "library" (get % "catalog"))
+                                                           (= "total" (get % "axis")))
+                                                     events))
+                fields-per-entity     (first (filter #(and (= "library" (get % "catalog"))
+                                                           (= "fields_per_entity" (get % "axis")))
+                                                     events))
+                description-coverage  (first (filter #(and (= "universe" (get % "catalog"))
+                                                           (= "description_coverage" (get % "axis")))
+                                                     events))
+                name-collisions       (first (filter #(and (= "library" (get % "catalog"))
+                                                           (= "name_collisions" (get % "axis")))
+                                                     events))]
+            (is (seq raw-events) "sanity: semantic complexity events were emitted")
+            (is (= (count raw-events) (count events)))
+            (is (every? #(= "iglu:com.metabase/semantic_complexity/jsonschema/2-0-0"
+                            (get % "schema"))
+                        raw-events))
+            (is (every? #(= level (get % "level")) events))
+            (if (zero? level)
+              (do
+                (is (every? #(not (contains? % "synonym_threshold")) events))
+                (is (every? #(= "total" (get % "axis")) events)))
+              (do
+                (is (every? #(not (contains? % "synonym_threshold")) events))
+                (is (= "scale" (get fields-per-entity "dimension")))
+                (is (contains? fields-per-entity "measurement"))
+                (is (not (contains? fields-per-entity "score")))
+                (is (= "metadata" (get description-coverage "dimension")))
+                (is (contains? description-coverage "measurement"))
+                (is (not (contains? description-coverage "score")))
+                (is (= "nominal" (get name-collisions "dimension")))
+                (is (= 100 (get name-collisions "score")))
+                (is (= 1 (get name-collisions "measurement")))))
+            (is (contains? total "score"))
+            (is (not (contains? total "dimension")))
+            (is (not (contains? total "measurement")))))))))
 
 (deftest ^:sequential emit-snowplow-includes-embedding-model-meta-test
   (testing "every event carries embedding_model_provider/name when the search-index embedder is active"
