@@ -12,10 +12,14 @@
 
   For a search-index–backed embedder see [[metabase-enterprise.semantic-search.core/search-index-embedder]];
   this namespace holds the [[fn-embedder]] adapter used by tests and any future name-only cached
-  embedder, plus the [[file-embedder]] used by the CLI when scoring a representation directory."
+  embedder, the [[file-embedder]] used by the CLI when scoring a representation directory, and the
+  [[provider-embedder]] that routes the synonym axis through a specific provider/model
+  (e.g. ollama + `all-MiniLM-L6-v2`) independent of the search-index model."
   (:require
    [clojure.string :as str]
-   [metabase.util :as u]))
+   [metabase-enterprise.semantic-search.core :as semantic-search]
+   [metabase.util :as u]
+   [metabase.util.log :as log]))
 
 (set! *warn-on-reflection* true)
 
@@ -46,3 +50,22 @@
                                    [n (if (instance? (Class/forName "[F") v) v (float-array v))])))
                          name->vec)]
     (fn embed [_entities] normalized)))
+
+(defn provider-embedder
+  "Route the synonym axis through the semantic-search embedding dispatcher for a specific
+  `{:provider :model-name :vector-dimensions}` config, independent of the active search-index
+  model. `embedding-model` is passed straight to
+  [[metabase-enterprise.semantic-search.embedding/get-embeddings-batch]].
+  Returns `nil` when the config is incomplete (missing provider or model-name). Any thrown error
+  from the underlying dispatcher is caught and converted into a nil vector collection so the
+  fn-embedder shape drops every name and the synonym axis degrades gracefully per the embedder
+  contract."
+  [{:keys [provider model-name] :as embedding-model}]
+  (when (and (seq provider) (seq model-name))
+    (fn-embedder
+     (fn [names]
+       (try
+         (semantic-search/get-embeddings-batch embedding-model names)
+         (catch Throwable t
+           (log/warn t "provider-embedder: get-embeddings-batch failed; disabling synonym axis")
+           nil))))))

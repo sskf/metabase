@@ -22,11 +22,13 @@
   The synonym sub-score is delegated to a pluggable embedder — see
   [[metabase-enterprise.semantic-layer.complexity-embedders]].
   Default in prod reuses vectors from the semantic-search index so computing a score adds essentially no
-  embedding cost."
+  embedding cost. Operators may aim the synonym axis at a dedicated embedding model via the
+  `ee-complexity-synonym-*` settings."
   (:require
    [clojure.pprint :as pprint]
    [clojure.string :as str]
    [metabase-enterprise.semantic-layer.complexity-embedders :as embedders]
+   [metabase-enterprise.semantic-layer.settings :as semantic-layer-settings]
    [metabase-enterprise.semantic-search.core :as semantic-search]
    [metabase.analytics.core :as analytics]
    [metabase.analytics.prometheus :as prometheus]
@@ -64,12 +66,25 @@
    :synonym-pairs     :ambiguity
    :repeated-measures :ambiguity})
 
-(def synonym-similarity-threshold
-  "Cosine-similarity cutoff for flagging two names as synonyms.
-  Higher than semantic-search's retrieval cutoff (0.30) because scoring wants precision, not recall.
-  Eyeballed against stats-appdb samples; see `test_resources/semantic_layer/analysis/2026_04_21_data_analysis_summary.md`.
-  Hard-coded so it can drift independently from the search cutoff."
+(def default-synonym-similarity-threshold
+  "Default cosine-similarity cutoff above which two entity names count as synonyms.
+  Calibrated for Snowflake Arctic Embed L (today's search-index model). Higher than
+  semantic-search's retrieval cutoff (0.30) because scoring wants precision, not recall.
+  Eyeballed against stats-appdb samples; see
+  `test_resources/semantic_layer/analysis/2026_04_21_data_analysis_summary.md`.
+  Overridable via [[metabase-enterprise.semantic-layer.settings/ee-complexity-synonym-threshold]];
+  pair with a matching embedding model when flipping."
   0.90)
+
+(defn- default-threshold-for
+  "Provider+model-aware default for the synonym threshold. `all-MiniLM-L6-v2` calibrates at 0.80
+  (per the analysis doc); everything else falls back to the Arctic-calibrated default."
+  [provider model-name]
+  (if (and (= provider "ollama")
+           (string? model-name)
+           (str/includes? (u/lower-case-en model-name) "minilm"))
+    0.80
+    default-synonym-similarity-threshold))
 
 ;;; ----------------------------------- enumeration -----------------------------------
 ;;;
@@ -322,38 +337,44 @@
        :value-doesnt-matter))))
 
 (defn- score-synonym-pairs
-  "Compute the synonym sub-score for `entities` using `embedder`. Returns zero (with a warning
-   logged) if the embedder yields no vectors or throws. A nil `embedder` naturally produces an empty
-   lookup and falls through to zero."
-  [entities embedder]
-  (try
-    (let [name->vec     (or (and embedder (embedder entities)) {})
-          ;; We need to materialize all these vectors in a clojure vec for efficient pairwise similarity checks.
-          known-vectors (into []
-                              (comp (keep (comp embedders/normalize-name :name))
-                                    (distinct)
-                                    (keep name->vec))
-                              entities)
-          pairs         (synonym-pair-count known-vectors synonym-similarity-threshold)]
-      (component-score :synonym-pair pairs))
-    (catch Throwable t
-      (log/warn t "Complexity score: synonym detection failed; falling back to 0")
-      (let [msg (some-> (.getMessage t) str/trim)
-            err (if (str/blank? msg)
-                  (or (some-> (class t) .getName) "synonym detection failed")
-                  msg)]
-        (assoc (component-score :synonym-pair 0) :error err)))))
+  "Compute the synonym sub-score for `entities` using `embedder` and `threshold`. Returns zero (with
+   a warning logged) if the embedder yields no vectors or throws. A nil `embedder` naturally produces
+   an empty lookup and falls through to zero."
+  ([entities embedder]
+   (score-synonym-pairs entities embedder default-synonym-similarity-threshold))
+  ([entities embedder threshold]
+   (try
+     (let [name->vec     (or (and embedder (embedder entities)) {})
+           ;; We need to materialize all these vectors in a clojure vec for efficient pairwise similarity checks.
+           known-vectors (into []
+                               (comp (keep (comp embedders/normalize-name :name))
+                                     (distinct)
+                                     (keep name->vec))
+                               entities)
+           pairs         (synonym-pair-count known-vectors threshold)]
+       (component-score :synonym-pair pairs))
+     (catch Throwable t
+       (log/warn t "Complexity score: synonym detection failed; falling back to 0")
+       (let [msg (some-> (.getMessage t) str/trim)
+             err (if (str/blank? msg)
+                   (or (some-> (class t) .getName) "synonym detection failed")
+                   msg)]
+         (assoc (component-score :synonym-pair 0) :error err))))))
 
 (defn score-catalog
-  "Pure: compute the score breakdown for a catalog given its `entities` and an optional `embedder`."
-  [entities embedder]
-  (let [components {:entity-count      (score-entity-count entities)
-                    :name-collisions   (score-name-collisions entities)
-                    :synonym-pairs     (score-synonym-pairs entities embedder)
-                    :field-count       (score-field-count entities)
-                    :repeated-measures (score-repeated-measures entities)}]
-    {:total      (reduce + (map (comp :score val) components))
-     :components components}))
+  "Pure: compute the score breakdown for a catalog given its `entities`, an optional `embedder`,
+   and a synonym-similarity `threshold`. The 2-arity variant uses the
+   [[default-synonym-similarity-threshold]] and is retained for tests and back-compat callers."
+  ([entities embedder]
+   (score-catalog entities embedder default-synonym-similarity-threshold))
+  ([entities embedder threshold]
+   (let [components {:entity-count      (score-entity-count entities)
+                     :name-collisions   (score-name-collisions entities)
+                     :synonym-pairs     (score-synonym-pairs entities embedder threshold)
+                     :field-count       (score-field-count entities)
+                     :repeated-measures (score-repeated-measures entities)}]
+     {:total      (reduce + (map (comp :score val) components))
+      :components components})))
 
 ;;; ----------------------------------- public API ------------------------------------
 
@@ -428,16 +449,20 @@
         (default), `:metabot` reuses the `:universe` score so the response shape is stable without
         paying for a redundant pass — callers loading entities from a representation file have no
         way to reconstruct Metabot's visibility filters and should either pass a pre-filtered
-        vector here or accept the universe approximation."
-  [library-entities universe-entities embedder {:keys [embedding-model-meta metabot-entities]}]
-  (let [universe-score (score-catalog universe-entities embedder)]
-    {:library  (score-catalog library-entities embedder)
+        vector here or accept the universe approximation.
+     `:threshold` — cosine-similarity cutoff for the synonym axis. Defaults to
+        [[default-synonym-similarity-threshold]]. Pair with the embedding model (Arctic = 0.90,
+        MiniLM = 0.80; see the analysis doc)."
+  [library-entities universe-entities embedder {:keys [embedding-model-meta metabot-entities threshold]}]
+  (let [threshold      (or threshold default-synonym-similarity-threshold)
+        universe-score (score-catalog universe-entities embedder threshold)]
+    {:library  (score-catalog library-entities embedder threshold)
      :universe universe-score
      :metabot  (if metabot-entities
-                 (score-catalog metabot-entities embedder)
+                 (score-catalog metabot-entities embedder threshold)
                  universe-score)
      :meta     (cond-> {:formula-version   formula-version
-                        :synonym-threshold synonym-similarity-threshold}
+                        :synonym-threshold threshold}
                  embedding-model-meta (assoc :embedding-model embedding-model-meta))}))
 
 (defn- time-phase!
@@ -451,6 +476,35 @@
                              {:phase phase}
                              (u/since-ms timer))))))
 
+(defn- resolve-synonym-embedder
+  "Pick the default synonym-axis embedder, threshold, and model metadata based on the
+  `ee-complexity-synonym-*` settings. Returns `{:fn embedder-fn :threshold t :model-meta m}`.
+  When the settings are unset (or incomplete) the search-index embedder is used with a threshold
+  calibrated for the search model (Arctic)."
+  []
+  (let [override-threshold (semantic-layer-settings/ee-complexity-synonym-threshold)
+        provider           (semantic-layer-settings/ee-complexity-synonym-provider)
+        model-name         (semantic-layer-settings/ee-complexity-synonym-model-name)
+        dims               (semantic-layer-settings/ee-complexity-synonym-model-dimensions)
+        search-index-default
+        {:fn         semantic-search/search-index-embedder
+         :threshold  (or override-threshold default-synonym-similarity-threshold)
+         :model-meta (semantic-search/active-embedding-model)}]
+    (if-let [embed-fn (and (seq provider) (seq model-name)
+                           (embedders/provider-embedder
+                            {:provider          provider
+                             :model-name        model-name
+                             :vector-dimensions dims}))]
+      {:fn         embed-fn
+       :threshold  (or override-threshold (default-threshold-for provider model-name))
+       :model-meta {:provider provider :model-name model-name}}
+      (do
+        (when (or (seq provider) (seq model-name))
+          (log/warnf (str "Complexity: ee-complexity-synonym-* settings incomplete "
+                          "(provider=%s, model-name=%s); falling back to search-index embedder.")
+                     (pr-str provider) (pr-str model-name)))
+        search-index-default))))
+
 (defn complexity-scores
   "Compute the complexity score for the `:library`, `:universe`, and `:metabot` catalogs of this
    Metabase instance. Returns a map of the shape:
@@ -463,9 +517,12 @@
                  :embedding-model {...}}}
 
    Options:
-     `:embedder` — overrides the synonym-axis embedder (defaults to
-        [[metabase-enterprise.semantic-search.core/search-index-embedder]]); pass `nil` to disable
-        synonym scoring.
+     `:embedder` — overrides the synonym-axis embedder. When omitted, the embedder is resolved
+        from the `ee-complexity-synonym-*` settings, falling back to
+        [[metabase-enterprise.semantic-search.core/search-index-embedder]]; pass `nil` to disable
+        synonym scoring. Explicit `:embedder` values use [[default-synonym-similarity-threshold]]
+        (or the `ee-complexity-synonym-threshold` override if set); route via settings to pick a
+        per-model threshold.
      `:metabot-scope` — a `{:verified-only? <bool> :collection-id <nil|Long>}` map describing how
         the internal Metabot filters Cards. `:metabot` is always scored separately from `:universe`
         because Metabot/search table visibility (hidden tables, routed databases) already diverges
@@ -481,22 +538,25 @@
   ;;; we currently will currently consume (provided we have that memory).
   (let [total-timer (u/start-timer)]
     (try
-      (let [embedder       (if (contains? opts :embedder)
-                             embedder
-                             semantic-search/search-index-embedder)
-            model-meta     (when (= embedder semantic-search/search-index-embedder)
-                             (semantic-search/active-embedding-model))
+      (let [{embed-fn :fn :keys [threshold model-meta]}
+            (if (contains? opts :embedder)
+              {:fn         embedder
+               :threshold  (or (semantic-layer-settings/ee-complexity-synonym-threshold)
+                               default-synonym-similarity-threshold)
+               :model-meta (when (= embedder semantic-search/search-index-embedder)
+                             (semantic-search/active-embedding-model))}
+              (resolve-synonym-embedder))
             library-ents   (time-phase! "enumerate-library" library-entities)
             universe-ents  (time-phase! "enumerate-universe" universe-entities)
             metabot-ents   (time-phase! "enumerate-metabot" #(metabot-entities metabot-scope))
-            universe-score (time-phase! "score-universe" #(score-catalog universe-ents embedder))
-            library-score  (time-phase! "score-library"  #(score-catalog library-ents embedder))
-            metabot-score  (time-phase! "score-metabot"  #(score-catalog metabot-ents embedder))
+            universe-score (time-phase! "score-universe" #(score-catalog universe-ents embed-fn threshold))
+            library-score  (time-phase! "score-library"  #(score-catalog library-ents embed-fn threshold))
+            metabot-score  (time-phase! "score-metabot"  #(score-catalog metabot-ents embed-fn threshold))
             result         {:library  library-score
                             :universe universe-score
                             :metabot  metabot-score
                             :meta     (cond-> {:formula-version   formula-version
-                                               :synonym-threshold synonym-similarity-threshold}
+                                               :synonym-threshold threshold}
                                         model-meta (assoc :embedding-model model-meta))}]
         (log-scores! result)
         (let [published? (try
