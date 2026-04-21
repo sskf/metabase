@@ -462,10 +462,12 @@
           (is (= expected actual)
               "every (catalog, axis) pair carries the matching score from the result")
           (testing "every event carries the event name, formula version, and synonym threshold"
+            ;; Pinned to exact values — a regression that emits formula_version=1 or the old
+            ;; 0.30 threshold would pass a looser integer?/number? check.
             (is (every? (fn [e]
                           (and (= "semantic_complexity_scored" (get e "event"))
-                               (integer? (get e "formula_version"))
-                               (number?  (get e "synonym_threshold"))))
+                               (= 2   (get e "formula_version"))
+                               (= 0.9 (get e "synonym_threshold"))))
                         events))))))))
 
 (deftest ^:sequential emit-snowplow-includes-measurement-for-count-and-pair-axes-test
@@ -554,19 +556,32 @@
                   (messages))
             "the score was logged locally at :info even though Snowplow emission threw")))))
 
-(deftest ^:sequential startup-hook-logs-score-at-boot-test
-  (testing "the boot-time hook runs complexity-scores unconditionally so operators see a score"
-    ;; Run the submitted background task synchronously so we can assert on its log output
-    ;; and so the with-redefs don't unwind before it finishes.
-    (with-redefs [quick-task/submit-task! (fn [task] (task) nil)]
-      (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "orders")])
-                                  complexity/universe-entities (constantly [(entity :name "orders")])]
-        (mt/with-log-messages-for-level [messages [metabase-enterprise.semantic-layer.complexity :info]]
-          (startup/def-startup-logic! ::init/PublishSemanticComplexityScore)
-          (is (some #(and (= :info (:level %))
-                          (re-find #"Semantic complexity score" (:message %)))
-                    (messages))
-              "the startup hook produced the expected info log"))))))
+(deftest ^:sequential startup-hook-schedules-complexity-scores-test
+  (testing "the boot-time hook schedules complexity-scores via quick-task/submit-task!"
+    ;; Guards three regressions together:
+    ;; 1. A regression that calls `complexity-scores` directly instead of via `submit-task!`
+    ;;    would still produce the old test's info-log assertion, but fails this test because
+    ;;    `submit-task!` was never invoked.
+    ;; 2. A regression that turned the hook body into a no-op would fail `scored?` here.
+    ;; 3. `complexity-scores` is stubbed so the test exercises only the startup wiring — not
+    ;;    the real search-index embedder or Snowplow collector.
+    (let [submitted?    (atom false)
+          scored?       (atom false)
+          score-args    (atom nil)]
+      (with-redefs [quick-task/submit-task!         (fn [task]
+                                                      (reset! submitted? true)
+                                                      (task)
+                                                      nil)
+                    complexity/complexity-scores    (fn [& args]
+                                                      (reset! scored? true)
+                                                      (reset! score-args args)
+                                                      {})
+                    analytics/track-event!          (fn [& _] nil)
+                    semantic-search/search-index-embedder (constantly {})]
+        (startup/def-startup-logic! ::init/PublishSemanticComplexityScore)
+        (is (true? @submitted?) "the startup hook must schedule its work via quick-task/submit-task!")
+        (is (true? @scored?)    "the scheduled task must invoke complexity/complexity-scores")
+        (is (empty? @score-args) "the startup hook calls complexity-scores with no args")))))
 
 (deftest ^:sequential complexity-score-library-hermetic-test
   (testing "library score is computed over exactly the Library collection tree — known inputs produce known scores"
