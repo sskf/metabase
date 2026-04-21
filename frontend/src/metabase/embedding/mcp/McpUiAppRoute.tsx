@@ -173,13 +173,14 @@ export function McpUiAppRoute() {
           console.error("[MCP] storePendingCard error", e);
         }
 
-        // Ask the LLM to call render_drill_through — no context in the message.
+        // Phrasing mirrors the tool description ("show a drill-through result")
+        // so the LLM reliably calls render_drill_through without added context.
         await app.sendMessage({
           role: "user",
           content: [
             {
               type: "text",
-              text: "Call the render_drill_through tool.",
+              text: "Show me the drill-through result.",
             },
           ],
         });

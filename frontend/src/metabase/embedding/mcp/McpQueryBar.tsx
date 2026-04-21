@@ -330,10 +330,6 @@ export function McpQuestionTitle() {
   const aggregations = Lib.aggregations(query, stageIndex);
   const breakouts = Lib.breakouts(query, stageIndex);
 
-  if (aggregations.length === 0 && breakouts.length === 0) {
-    return null;
-  }
-
   const aggregationNames = aggregations
     .map((a) => Lib.displayInfo(query, stageIndex, a).displayName)
     .join(", ");
@@ -354,7 +350,23 @@ export function McpQuestionTitle() {
     })
     .join(", ");
 
-  const title = [aggregationNames, breakoutNames].filter(Boolean).join(" by ");
+  // For raw table queries (no aggregations/breakouts), fall back to the question display name
+  // (e.g. "Orders") so the title is always shown.
+  const title =
+    [aggregationNames, breakoutNames].filter(Boolean).join(" by ") ||
+    question.displayName() ||
+    "";
+
+  // eslint-disable-next-line no-console
+  console.log("[MCP] McpQuestionTitle", {
+    aggregations: aggregations.length,
+    breakouts: breakouts.length,
+    aggregationNames,
+    breakoutNames,
+    displayName: question.displayName(),
+    display: question.display(),
+    title,
+  });
 
   if (!title) {
     return null;
