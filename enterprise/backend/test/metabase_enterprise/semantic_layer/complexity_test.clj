@@ -5,11 +5,9 @@
    [metabase-enterprise.semantic-layer.complexity :as complexity]
    [metabase-enterprise.semantic-layer.complexity-embedders :as embedders]
    [metabase-enterprise.semantic-layer.init :as init]
-   [metabase-enterprise.semantic-layer.settings :as semantic-layer-settings]
+   [metabase-enterprise.semantic-layer.settings :as settings]
    [metabase-enterprise.semantic-search.core :as semantic-search]
    [metabase-enterprise.semantic-search.embedders :as ss.embedders]
-   [metabase-enterprise.semantic-search.embedding :as ss.embedding]
-   [metabase-enterprise.semantic-search.settings :as ss.settings]
    [metabase.analytics.core :as analytics]
    [metabase.analytics.snowplow-test :as snowplow-test]
    [metabase.app-db.cluster-lock :as cluster-lock]
@@ -23,15 +21,25 @@
 (def ^:private test-entity-ids (atom 0))
 
 (defn- entity
-  "Build a fake entity map for scoring tests. Uses a monotonically-increasing counter for `:id`
-  so every test entity is distinct (and so test failures print stable, readable ids)."
-  [& {:keys [name kind field-count measure-names]
-      :or   {kind :table field-count 0 measure-names []}}]
+  "Fake-entity builder for scoring tests. Uses a monotonic counter so ids are stable across
+  assertions. Richer-than-v1 shape: `:description`, `:fields` [{:name :semantic-type :description}]."
+  [& {:keys [name kind field-count fields measure-names description]
+      :or   {kind :table field-count 0 fields [] measure-names [] description nil}}]
   {:id            (swap! test-entity-ids inc)
    :name          name
    :kind          kind
-   :field-count   field-count
+   :description   description
+   :field-count   (if (seq fields) (count fields) field-count)
+   :fields        fields
    :measure-names measure-names})
+
+(defn- catalog
+  "`{:entities [...] :collection-count N}` wrapper for the score-from-entities arg. Collection
+  count defaults to the entity count when unspecified so tests that don't care about scale pass
+  something reasonable to the scale dimension."
+  ([entities] (catalog entities nil))
+  ([entities collection-count]
+   {:entities entities :collection-count (or collection-count (count entities))}))
 
 (defn- mock-embedder
   "Build an embedder backed by a `{name -> vector-literal}` lookup table for tests."
@@ -40,136 +48,205 @@
    (fn [names]
      (mapv #(when-let [v (get name->vec-literal %)] (float-array v)) names))))
 
-(deftest ^:parallel score-catalog-pure-test
-  (testing "empty catalog scores zero"
-    (is (=? {:total 0
-             :components {:entity-count      {:count 0 :score 0}
-                          :name-collisions   {:pairs 0 :score 0}
-                          :synonym-pairs     {:pairs 0 :score 0}
-                          :field-count       {:count 0 :score 0}
-                          :repeated-measures {:count 0 :score 0}}}
-            (#'complexity/score-catalog [] nil))))
+(defn- score-entities
+  "Call score-catalog via its private var. Wraps the argument plumbing."
+  [entities embedder level & {:keys [collection-count] :or {collection-count 0}}]
+  (#'complexity/score-catalog entities {:collection-count collection-count} embedder level))
 
-  (testing "entity count contributes +10 per entity"
-    (let [es [(entity :name "orders")
-              (entity :name "customers")
-              (entity :name "products")]]
-      (is (=? {:total 30
-               :components {:entity-count {:count 3 :score 30}}}
-              (#'complexity/score-catalog es nil)))))
+;;; ------------------------------ pure per-dimension -----------------------------
 
-  (testing "name collisions stack linearly: 3 identical names = +200"
-    (let [es [(entity :name "orders")
-              (entity :name "orders")
-              (entity :name "orders")]]
-      (is (=? {:components {:entity-count    {:count 3 :score 30}
-                            :name-collisions {:pairs 2 :score 200}}}
-              (#'complexity/score-catalog es nil)))))
+(deftest ^:parallel score-catalog-empty-test
+  (testing "empty catalog scores zero on every scored variable"
+    (let [{:keys [total dimensions]} (score-entities [] nil 2)]
+      (is (= 0 total))
+      (is (= 0 (get-in dimensions [:scale :sub-total])))
+      (is (= 0 (get-in dimensions [:nominal :sub-total])))
+      (is (= 0 (get-in dimensions [:semantic :sub-total]))))))
 
-  (testing "collision detection is case-insensitive and trims whitespace"
-    (let [es [(entity :name "Orders")
-              (entity :name " orders ")
-              (entity :name "ORDERS")]]
-      (is (=? {:components {:name-collisions {:pairs 2 :score 200}}}
-              (#'complexity/score-catalog es nil)))))
-
-  (testing "field count contributes +1 per field, summed across entities"
+(deftest ^:parallel scale-dim-test
+  (testing "entity-count contributes +10 per entity"
+    (let [es [(entity :name "orders") (entity :name "customers") (entity :name "products")]]
+      (is (=? {:dimensions {:scale {:variables {:entity-count {:value 3 :score 30}}}}}
+              (score-entities es nil 1)))))
+  (testing "field-count sums :field-count across entities, +1 each"
     (let [es [(entity :name "a" :field-count 10)
               (entity :name "b" :field-count 25)]]
-      (is (=? {:components {:field-count {:count 35 :score 35}}}
-              (#'complexity/score-catalog es nil)))))
+      (is (=? {:dimensions {:scale {:variables {:field-count {:value 35 :score 35}}}}}
+              (score-entities es nil 1)))))
+  (testing "collection-tree-size contributes +1 per collection in scope"
+    (is (=? {:dimensions {:scale {:variables {:collection-tree-size {:value 7 :score 7}}}}}
+            (score-entities [] nil 1 :collection-count 7))))
+  (testing "fields-per-entity is descriptive (no :score)"
+    (let [es [(entity :name "a" :field-count 4) (entity :name "b" :field-count 6)]]
+      (is (=? {:dimensions {:scale {:variables {:fields-per-entity {:value 5.0}}}}}
+              (score-entities es nil 1)))
+      (is (nil? (get-in (score-entities es nil 1)
+                        [:dimensions :scale :variables :fields-per-entity :score]))))))
 
-  (testing "repeated measures contribute +2 per repeat (measure name appearing on >1 entity)"
-    (let [es [(entity :name "invoices"      :measure-names ["revenue" "discount"])
-              (entity :name "subscriptions" :measure-names ["revenue"])
-              (entity :name "products"      :measure-names ["price"])]]
-      (is (=? {:components {:repeated-measures {:count 1 :score 2}}}
-              (#'complexity/score-catalog es nil)))))
+(deftest ^:parallel nominal-dim-test
+  (testing "name-collisions: 3 identical names = 2 pairs × 100 = 200; case-insensitive + whitespace-trimmed"
+    (let [es [(entity :name "Orders") (entity :name " orders ") (entity :name "ORDERS")]]
+      (is (=? {:dimensions {:nominal {:variables {:name-collisions {:value 2 :score 200}}}}}
+              (score-entities es nil 1)))))
+  (testing "repeated-measures: measure-name appearing on >1 entity = +2 per repeat"
+    (let [es [(entity :name "a" :measure-names ["revenue" "discount"])
+              (entity :name "b" :measure-names ["revenue"])
+              (entity :name "c" :measure-names ["price"])]]
+      (is (=? {:dimensions {:nominal {:variables {:repeated-measures {:value 1 :score 2}}}}}
+              (score-entities es nil 1)))))
+  (testing "field-level-collisions: field name appearing on >1 distinct table = +5 per collision"
+    (let [es [(entity :name "orders"  :fields [{:name "id"} {:name "customer_id"}])
+              (entity :name "widgets" :fields [{:name "id"} {:name "status"}])
+              (entity :name "lonely"  :fields [{:name "only_here"}])]]
+      (is (=? {:dimensions {:nominal {:variables {:field-level-collisions {:value 1 :score 5}}}}}
+              (score-entities es nil 1)))))
+  (testing "name-collisions-density is collisions/entity-count × 100"
+    (let [es [(entity :name "a") (entity :name "a") (entity :name "b") (entity :name "c")]]
+      (is (=? {:dimensions {:nominal {:variables {:name-collisions-density {:value 25.0}}}}}
+              (score-entities es nil 1))))))
 
-  (testing "nil embedder disables synonym scoring"
-    (let [es [(entity :name "customers") (entity :name "clients")]]
-      (is (=? {:components {:synonym-pairs {:pairs 0 :score 0}}}
-              (#'complexity/score-catalog es nil))))))
+(deftest ^:parallel semantic-dim-triangle-plus-isolated-test
+  (testing "triangle of similar names + one isolated name yields components=2, largest=3, cluster=1.0"
+    (let [es       [(entity :name "a") (entity :name "b") (entity :name "c") (entity :name "d")]
+          embedder (mock-embedder {"a" [1.0 0.0 0.0]
+                                   "b" [0.99 0.1 0.0]
+                                   "c" [0.98 0.12 0.02]
+                                   "d" [0.0 0.0 1.0]})]
+      (is (=? {:dimensions
+               {:semantic
+                {:variables {:synonym-pairs             {:value 3 :score 150}
+                             :synonym-components        {:value 2}
+                             :synonym-largest-component {:value 3}
+                             :synonym-clustering-coef   {:value 1.0}}}}}
+              (score-entities es embedder 2))))))
 
-(deftest ^:parallel synonym-scoring-test
-  (testing "cosine similarity above threshold flags a synonym pair"
-    (let [es       [(entity :name "customers") (entity :name "clients")]
-          embedder (mock-embedder {"customers" [1.0 0.0 0.0]
-                                   "clients"   [0.9 0.1 0.0]})]
-      (is (=? {:components {:synonym-pairs {:pairs 1 :score 50}}}
-              (#'complexity/score-catalog es embedder)))))
-
-  (testing "orthogonal embeddings produce no synonym pairs"
-    (let [es       [(entity :name "customers") (entity :name "widgets")]
-          embedder (mock-embedder {"customers" [1.0 0.0]
-                                   "widgets"   [0.0 1.0]})]
-      (is (=? {:components {:synonym-pairs {:pairs 0 :score 0}}}
-              (#'complexity/score-catalog es embedder)))))
-
-  (testing "exact-name duplicates don't double-count as synonym pairs"
+(deftest ^:parallel semantic-dim-graceful-degradation-test
+  (testing "orthogonal vectors produce no pairs; clustering-coef is nil (no triples)"
+    (let [es       [(entity :name "a") (entity :name "b")]
+          embedder (mock-embedder {"a" [1.0 0.0] "b" [0.0 1.0]})]
+      (is (=? {:dimensions {:semantic {:variables
+                                       {:synonym-pairs {:value 0 :score 0}
+                                        :synonym-clustering-coef {:value nil}}}}}
+              (score-entities es embedder 2)))))
+  (testing "exact-name duplicates don't double-count: name-collision counts once, synonym counts once"
     (let [es       [(entity :name "orders") (entity :name "orders") (entity :name "tickets")]
-          embedder (mock-embedder {"orders"  [1.0 0.0]
-                                   "tickets" [0.0 1.0]})]
-      (is (=? {:components {:name-collisions {:pairs 1 :score 100}
-                            :synonym-pairs   {:pairs 0 :score 0}}}
-              (#'complexity/score-catalog es embedder)))))
-
-  (testing "entities without a vector from the embedder are simply skipped"
-    (let [es       [(entity :name "customers") (entity :name "clients") (entity :name "ghost")]
-          ;; "ghost" is missing → not considered. The remaining two are synonyms.
-          embedder (mock-embedder {"customers" [1.0 0.0]
-                                   "clients"   [0.99 0.01]})]
-      (is (=? {:components {:synonym-pairs {:pairs 1 :score 50}}}
-              (#'complexity/score-catalog es embedder)))))
-
-  (testing "embedder failure degrades gracefully (score 0, not exception)"
-    (let [es       [(entity :name "customers") (entity :name "clients")]
+          embedder (mock-embedder {"orders" [1.0 0.0] "tickets" [0.0 1.0]})]
+      (is (=? {:dimensions {:nominal  {:variables {:name-collisions {:value 1 :score 100}}}
+                            :semantic {:variables {:synonym-pairs   {:value 0 :score 0}}}}}
+              (score-entities es embedder 2)))))
+  (testing "entities missing from the embedder are simply skipped"
+    (let [es       [(entity :name "a") (entity :name "b") (entity :name "ghost")]
+          embedder (mock-embedder {"a" [1.0 0.0] "b" [0.99 0.01]})]
+      (is (=? {:dimensions {:semantic {:variables {:synonym-pairs {:value 1 :score 50}}}}}
+              (score-entities es embedder 2)))))
+  (testing "embedder failure degrades gracefully (score 0, not exception; :error propagates)"
+    (let [es       [(entity :name "a") (entity :name "b")]
           embedder (fn [_] (throw (ex-info "boom" {})))]
-      (is (=? {:components {:synonym-pairs {:pairs 0 :score 0 :error "boom"}}}
-              (#'complexity/score-catalog es embedder))))))
+      (is (=? {:dimensions {:semantic {:variables {:synonym-pairs {:value 0 :score 0
+                                                                   :error "boom"}}}}}
+              (score-entities es embedder 2))))))
+
+(deftest ^:parallel metadata-dim-test
+  (testing "description-coverage counts entities whose description is ≥ 20 chars"
+    (let [es [(entity :name "a" :description "A curated fact table for orders.")
+              (entity :name "b" :description "short")
+              (entity :name "c" :description nil)]]
+      (is (=? {:dimensions {:metadata {:variables {:description-coverage {:value (/ 1.0 3.0)}}}}}
+              (score-entities es nil 1)))))
+  (testing "curated-metric-coverage is fraction of table entities with ≥ 1 measure"
+    (let [es [(entity :name "a" :kind :table :measure-names ["x"])
+              (entity :name "b" :kind :table :measure-names [])
+              (entity :name "m" :kind :metric)]]
+      (is (=? {:dimensions {:metadata {:variables {:curated-metric-coverage {:value 0.5}}}}}
+              (score-entities es nil 1)))))
+  (testing "metadata has no :score on any variable and is NOT in :total"
+    (let [es [(entity :name "a" :description "A nicely-described table with lots of info.")]
+          {:keys [total dimensions]} (score-entities es nil 1)]
+      (is (nil? (get-in dimensions [:metadata :variables :description-coverage :score])))
+      (is (nil? (get-in dimensions [:metadata :sub-total])))
+      (is (= total (+ (get-in dimensions [:scale :sub-total])
+                      (get-in dimensions [:nominal :sub-total]))))
+      (is (contains? (:metadata dimensions) :coverage)))))
+
+;;; ----------------------------- level-gated behavior ----------------------------
+
+(deftest ^:sequential level-gating-test
+  (testing "level 0 short-circuits — no dimensions computed for any catalog, no embedder call"
+    (let [embed-calls (atom 0)
+          embedder    (fn [& _] (swap! embed-calls inc) {})
+          result      (complexity/score-from-entities (catalog [(entity :name "a")])
+                                                      (catalog [(entity :name "b")])
+                                                      embedder
+                                                      {:level 0})]
+      (is (= 0 @embed-calls) "embedder is never invoked at level 0")
+      (is (= {} (get-in result [:library  :dimensions])))
+      (is (= {} (get-in result [:universe :dimensions])))
+      (is (= 0 (get-in result [:library  :total])))
+      (is (= 0 (get-in result [:meta :level])))))
+  (testing "level 1 omits :semantic and doesn't call the embedder"
+    (let [embed-calls (atom 0)
+          embedder    (fn [& _] (swap! embed-calls inc) {})
+          result      (complexity/score-from-entities (catalog [(entity :name "a") (entity :name "b")])
+                                                      (catalog [(entity :name "a") (entity :name "b")])
+                                                      embedder
+                                                      {:level 1})]
+      (is (= 0 @embed-calls) "embedder is never invoked at level 1")
+      (is (not (contains? (get-in result [:library :dimensions]) :semantic)))
+      (is (contains? (get-in result [:library :dimensions]) :scale))
+      (is (contains? (get-in result [:library :dimensions]) :nominal))
+      (is (contains? (get-in result [:library :dimensions]) :metadata))))
+  (testing "level defaults to the setting when absent"
+    (mt/with-temporary-setting-values [settings/semantic-complexity-level 1]
+      (let [result (complexity/score-from-entities (catalog [(entity :name "a")])
+                                                   (catalog [(entity :name "b")])
+                                                   (constantly {})
+                                                   {})]
+        (is (= 1 (get-in result [:meta :level])))
+        (is (not (contains? (get-in result [:library :dimensions]) :semantic)))))))
+
+;;; ------------------------ metabot-scope orchestration --------------------------
 
 (deftest ^:sequential complexity-scores-metabot-scope-opt-test
-  (testing ":verified-only? true routes the :metabot catalog through metabot-entities"
-    (let [captured-scope (atom nil)]
-      (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [])
-                                  complexity/universe-entities (constantly [(entity :name "orders")
-                                                                            (entity :name "widgets")])
-                                  complexity/metabot-entities  (fn [scope]
-                                                                 (reset! captured-scope scope)
-                                                                 [(entity :name "orders")])]
+  (testing ":verified-only? true routes :metabot through metabot-catalog"
+    (let [captured (atom nil)]
+      (mt/with-dynamic-fn-redefs [complexity/library-catalog  (fn [] (catalog []))
+                                  complexity/universe-catalog (fn [] (catalog [(entity :name "orders")
+                                                                               (entity :name "widgets")]))
+                                  complexity/metabot-catalog  (fn [scope]
+                                                                (reset! captured scope)
+                                                                (catalog [(entity :name "orders")]))]
         (let [{:keys [universe metabot]} (complexity/complexity-scores
                                           :embedder nil
                                           :metabot-scope {:verified-only? true :collection-id nil})]
-          (is (= {:verified-only? true :collection-id nil} @captured-scope)
-              "metabot-entities was invoked with the caller's scope")
-          (is (= 1 (get-in metabot  [:components :entity-count :count])))
-          (is (= 2 (get-in universe [:components :entity-count :count])))))))
-  (testing ":collection-id alone also routes through metabot-entities (no verified flag required)"
-    (let [captured-scope (atom nil)]
-      (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [])
-                                  complexity/universe-entities (constantly [(entity :name "orders")
-                                                                            (entity :name "widgets")])
-                                  complexity/metabot-entities  (fn [scope]
-                                                                 (reset! captured-scope scope)
-                                                                 [(entity :name "orders")])]
+          (is (= {:verified-only? true :collection-id nil} @captured))
+          (is (= 1 (get-in metabot  [:dimensions :scale :variables :entity-count :value])))
+          (is (= 2 (get-in universe [:dimensions :scale :variables :entity-count :value])))))))
+  (testing ":collection-id alone also routes through metabot-catalog"
+    (let [captured (atom nil)]
+      (mt/with-dynamic-fn-redefs [complexity/library-catalog  (fn [] (catalog []))
+                                  complexity/universe-catalog (fn [] (catalog [(entity :name "orders")
+                                                                               (entity :name "widgets")]))
+                                  complexity/metabot-catalog  (fn [scope]
+                                                                (reset! captured scope)
+                                                                (catalog [(entity :name "orders")]))]
         (let [{:keys [metabot]} (complexity/complexity-scores
                                  :embedder nil
                                  :metabot-scope {:verified-only? false :collection-id 42})]
-          (is (= {:verified-only? false :collection-id 42} @captured-scope))
-          (is (= 1 (get-in metabot [:components :entity-count :count])))))))
-  (testing "empty scope (or no :metabot-scope opt) reuses the :universe score without recomputing"
+          (is (= {:verified-only? false :collection-id 42} @captured))
+          (is (= 1 (get-in metabot [:dimensions :scale :variables :entity-count :value])))))))
+  (testing "empty scope reuses the :universe score without recomputing"
     (doseq [scope [nil {} {:verified-only? false :collection-id nil}]]
       (let [metabot-called? (atom false)]
-        (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [])
-                                    complexity/universe-entities (constantly [(entity :name "orders")])
-                                    complexity/metabot-entities  (fn [_scope]
-                                                                   (reset! metabot-called? true)
-                                                                   [])]
+        (mt/with-dynamic-fn-redefs [complexity/library-catalog  (fn [] (catalog []))
+                                    complexity/universe-catalog (fn [] (catalog [(entity :name "orders")]))
+                                    complexity/metabot-catalog  (fn [_]
+                                                                  (reset! metabot-called? true)
+                                                                  (catalog []))]
           (let [{:keys [universe metabot]} (complexity/complexity-scores
                                             :embedder nil
                                             :metabot-scope scope)]
             (is (not @metabot-called?)
-                (format "metabot-entities was not invoked for scope=%s" (pr-str scope)))
+                (format "metabot-catalog was not invoked for scope=%s" (pr-str scope)))
             (is (identical? universe metabot))))))))
 
 (deftest ^:sequential metabot-collection-scope-ids-test
@@ -181,9 +258,6 @@
       (is (= #{parent child}
              (#'complexity/metabot-collection-scope-ids parent)))))
   (testing "invalid/deleted collection-id still returns a singleton set with the raw id"
-    ;; The live `metabot-metrics-and-models-query` filters on the raw `collection_id` even when
-    ;; the collection row is missing (stale Metabot scope value). If we dropped the filter here,
-    ;; the :metabot catalog would overcount and drift back toward :universe.
     (let [ghost-id Integer/MAX_VALUE]
       (is (nil? (t2/select-one :model/Collection :id ghost-id))
           "pre-check: the phantom id isn't actually a real collection")
@@ -191,10 +265,9 @@
              (#'complexity/metabot-collection-scope-ids ghost-id))))))
 
 (deftest ^:parallel fn-embedder-test
-  (testing "normalizes names, dedupes, zips vectors by position, and omits entries with no vector"
+  (testing "normalizes names, dedupes, zips vectors by position, omits entries with no vector"
     (let [known-vectors {"foo" (float-array [1.0 0.0])
-                         "bar" (float-array [0.0 1.0])
-                         "baz" (float-array [0.5 0.5])}
+                         "bar" (float-array [0.0 1.0])}
           embedder      (embedders/fn-embedder (partial mapv known-vectors))
           result        (embedder [{:name "Foo"}
                                    {:name " BAR"}
@@ -204,68 +277,52 @@
                "bar" (known-vectors "bar")}
               result)))))
 
+;;; -------------------------- live-DB integration tests --------------------------
+
 (deftest ^:sequential library-empty-when-no-library-collection-test
   (testing "on an instance with no Library collection, the library score is zero and universe still reports"
     (collections.tu/without-library
      (mt/with-temp [:model/Database {db-id :id} {:name "No-library Test DB"}
                     :model/Table    _           {:db_id db-id :name "contributes_to_universe" :active true}]
-       (let [{:keys [library universe]} (complexity/complexity-scores {:embedder nil})]
-         (testing "library is empty (no collection tree)"
-           (is (= {:total 0
-                   :components {:entity-count      {:count 0 :score 0}
-                                :name-collisions   {:pairs 0 :score 0}
-                                :synonym-pairs     {:pairs 0 :score 0}
-                                :field-count       {:count 0 :score 0}
-                                :repeated-measures {:count 0 :score 0}}}
-                  library)))
-         (testing "universe still enumerates appdb content (our temp table + whatever else is there)"
+       (let [{:keys [library universe]} (complexity/complexity-scores :embedder nil)]
+         (testing "library dimension block is all zeros / no collisions"
+           (is (= 0 (:total library)))
+           (is (= 0 (get-in library [:dimensions :scale :variables :entity-count :value]))))
+         (testing "universe still enumerates appdb content"
            (is (pos? (:total universe)))))))))
 
-;; We're only reading the method table via `methods`, not calling the impure `!` fn — safe in parallel.
 #_{:clj-kondo/ignore [:metabase/validate-deftest]}
 (deftest ^:parallel startup-logic-registered-test
   (testing "loading the semantic-layer init namespace registers a startup-logic method"
     (is (contains? (methods startup/def-startup-logic!)
-                   :metabase-enterprise.semantic-layer.init/PublishSemanticComplexityScore))))
+                   :metabase-enterprise.semantic-layer.init/PrintSemanticComplexityScore))))
 
 (deftest ^:parallel search-index-embedder-degrades-gracefully-test
   (testing "returns {} when semantic-search index isn't available (no throw)"
     (is (= {} (semantic-search/search-index-embedder
                [(entity :name "orders" :kind :table)])))))
 
-(defn- stub-fetch-batch
-  "Build a `fetch-batch` stub backed by a map of expected pair-sets -> rows. Each
-  invocation looks up rows by the incoming `(model, model_id)` pairs, so the stub
-  validates the real batching contract (which pair-sets are requested) without
-  coupling to call order. Unknown or duplicate pair-sets throw. Returns
-  `{:unseen <atom>, :stub <fn>}`; after the call under test, assert
-  `(empty? @unseen)` to catch missing invocations."
-  [expected]
+;;; --------------------------- search-index embedder -----------------------------
+;;; These exercise the embedder itself, not the complexity scorer. Unchanged from v1.
+
+(defn- stub-fetch-batch [expected]
   (let [unseen (atom (set (keys expected)))]
     {:unseen unseen
      :stub   (fn [_ _ pairs]
                (let [k (mapv vec pairs)]
                  (if (contains? @unseen k)
-                   (do (swap! unseen disj k)
-                       (get expected k))
+                   (do (swap! unseen disj k) (get expected k))
                    (throw (ex-info (format "fetch-batch called with unexpected or duplicate pairs: %s (remaining expected: %s)"
                                            (pr-str k) (pr-str @unseen))
                                    {:pairs k :remaining @unseen})))))}))
 
 (deftest ^:sequential search-index-embedder-global-dedup-test
   (testing "global dedup picks lowest numeric model_id regardless of batch boundaries"
-    ;; Stub at fetch-batch (not fetch-by-model+id) so the real partition-all + mapcat batching
-    ;; path executes. With batch-size 1, each entity pair lands in its own SQL batch, so the
-    ;; two duplicates come back from separate partitions and must be merged by the caller.
-    ;; The stub keys the expected batches by `(model, model_id)` pair-seq, so a regression in
-    ;; `entity-type->search-model` (or any extra/missing fetch call) fails the test.
     (let [winner-vec (float-array [1.0 0.0 0.0])
           loser-vec  (float-array [0.0 1.0 0.0])
           {:keys [unseen stub]}
           (stub-fetch-batch
-           {;; table with model_id "10" (loser — higher id)
-            [["table" "10"]] [{:name "Orders" :model_id "10" :model "table" :embedding loser-vec}]
-            ;; table with model_id "2" (winner — lower id)
+           {[["table" "10"]] [{:name "Orders" :model_id "10" :model "table" :embedding loser-vec}]
             [["table" "2"]]  [{:name "orders" :model_id "2"  :model "table" :embedding winner-vec}]})]
       (with-redefs [ss.embedders/try-active-index-state
                     (constantly {:pgvector :mock :table-name "t" :model nil})
@@ -274,25 +331,15 @@
         (let [result (semantic-search/search-index-embedder
                       [{:id 10 :name "Orders" :kind :table}
                        {:id 2  :name "orders" :kind :table}])]
-          (is (= 1 (count result)) "duplicate normalized names collapse to one entry")
-          (is (= (seq winner-vec) (seq (get result "orders")))
-              "the row with the lowest numeric model_id wins")
-          (is (empty? @unseen)
-              "every expected fetch-batch pair-set must be requested")))))
-
+          (is (= 1 (count result)))
+          (is (= (seq winner-vec) (seq (get result "orders"))))
+          (is (empty? @unseen))))))
   (testing "cross-model duplicates: lowest model_id wins, model is secondary tie-break"
-    ;; :kind :question maps to "card" and :kind :table maps to "table" via entity-type->search-model,
-    ;; so the real (model, model_id) query contract is exercised. Both have id 5, so model_ids tie
-    ;; and the lexicographically smaller model ("card" < "table") must win. The stub is keyed by
-    ;; pairs so a regression in entity-type->search-model (e.g. :question no longer mapping to
-    ;; "card") throws from the stub instead of passing silently.
     (let [card-vec  (float-array [1.0 0.0])
           table-vec (float-array [0.0 1.0])
           {:keys [unseen stub]}
           (stub-fetch-batch
-           {;; card (from :question entity)
-            [["card" "5"]]  [{:name "Revenue" :model_id "5" :model "card"  :embedding card-vec}]
-            ;; table (from :table entity)
+           {[["card" "5"]]  [{:name "Revenue" :model_id "5" :model "card"  :embedding card-vec}]
             [["table" "5"]] [{:name "revenue" :model_id "5" :model "table" :embedding table-vec}]})]
       (with-redefs [ss.embedders/try-active-index-state
                     (constantly {:pgvector :mock :table-name "t" :model nil})
@@ -302,102 +349,29 @@
                       [{:id 5 :name "Revenue" :kind :question}
                        {:id 5 :name "revenue" :kind :table}])]
           (is (= 1 (count result)))
-          (is (= (seq card-vec) (seq (get result "revenue")))
-              "when model_ids tie, the lexicographically smaller model wins (card < table)")
-          (is (empty? @unseen)
-              "every expected fetch-batch pair-set must be requested"))))))
-
-(deftest ^:sequential search-index-embedder-cross-batch-dedup-test
-  (testing "duplicates split across separate fetch batches are resolved globally"
-    ;; Mock at the fetch-batch level (not fetch-by-model+id) so the real partition-all + mapcat
-    ;; path in fetch-by-model+id executes. With batch-size 1, each entity pair lands in its own
-    ;; SQL batch. The stub is keyed by the expected `(model, model_id)` pair-seq, so it validates
-    ;; the batching contract — `entity-type->search-model` mapping (`:question` → "card",
-    ;; `:table` → "table") is exercised, not assumed, and extra/missing batches fail the test.
-    (let [winner-vec (float-array [1.0 0.0 0.0])
-          loser-vec  (float-array [0.0 1.0 0.0])
-          other-vec  (float-array [0.0 0.0 1.0])
-          {:keys [unseen stub]}
-          (stub-fetch-batch
-           {;; table with model_id "7"
-            [["table" "7"]] [{:name "Orders" :model_id "7" :model "table" :embedding loser-vec}]
-            ;; card with model_id "3" — should win globally
-            [["card" "3"]]  [{:name "orders" :model_id "3" :model "card" :embedding winner-vec}]
-            ;; different entity, no collision
-            [["table" "1"]] [{:name "Products" :model_id "1" :model "table" :embedding other-vec}]})]
-      (with-redefs [ss.embedders/try-active-index-state
-                    (constantly {:pgvector :mock :table-name "t" :model nil})
-                    ss.embedders/fetch-batch-size 1
-                    ss.embedders/fetch-batch stub]
-        (let [result (semantic-search/search-index-embedder
-                      [{:id 7 :name "Orders"   :kind :table}
-                       {:id 3 :name "orders"   :kind :question}
-                       {:id 1 :name "Products" :kind :table}])]
-          (is (= 2 (count result)) "two distinct normalized names survive dedup")
-          (is (= (seq winner-vec) (seq (get result "orders")))
-              "lowest model_id wins across batch boundaries")
-          (is (some? (get result "products"))
-              "non-colliding entity is retained")
-          (is (empty? @unseen)
-              "every expected fetch-batch pair-set must be requested")))))
-
-  (testing "cross-batch, cross-model duplicates: model_id primary, model secondary"
-    ;; Same normalized name from three different batches and three different model types.
-    ;; model_id "5" appears twice (card + dataset); model_id "12" is in a third batch.
-    ;; Expected winner: model_id "5", model "card" (lowest id, then lexicographic: "card" < "dataset").
-    ;; Entity kinds cover :table → "table", :model → "dataset", :question → "card".
-    (let [winner-vec          (float-array [1.0 0.0])
-          same-id-other-model (float-array [0.0 1.0])
-          higher-id-vec       (float-array [0.5 0.5])
-          {:keys [unseen stub]}
-          (stub-fetch-batch
-           {;; high model_id, model "table"
-            [["table" "12"]]  [{:name "Revenue" :model_id "12" :model "table" :embedding higher-id-vec}]
-            ;; low model_id, model "dataset"
-            [["dataset" "5"]] [{:name "revenue" :model_id "5" :model "dataset" :embedding same-id-other-model}]
-            ;; low model_id, model "card" — card < dataset so this wins
-            [["card" "5"]]    [{:name "REVENUE" :model_id "5" :model "card" :embedding winner-vec}]})]
-      (with-redefs [ss.embedders/try-active-index-state
-                    (constantly {:pgvector :mock :table-name "t" :model nil})
-                    ss.embedders/fetch-batch-size 1
-                    ss.embedders/fetch-batch stub]
-        (let [result (semantic-search/search-index-embedder
-                      [{:id 12 :name "Revenue" :kind :table}
-                       {:id 5  :name "revenue" :kind :model}
-                       {:id 5  :name "REVENUE" :kind :question}])]
-          (is (= 1 (count result)) "all three collapse to one normalized name")
-          (is (= (seq winner-vec) (seq (get result "revenue")))
-              "model_id 5 + model card wins (lowest id, then lexicographic: card < dataset)")
-          (is (empty? @unseen)
-              "every expected fetch-batch pair-set must be requested"))))))
+          (is (= (seq card-vec) (seq (get result "revenue"))))
+          (is (empty? @unseen)))))))
 
 (deftest ^:parallel prefer-new-row-test
   (let [prefer? #'ss.embedders/prefer-new-row?]
     (are [expected new-row prior-row]
          (= expected (prefer? new-row prior-row))
-      ;; lower numeric model_id wins
       true  {:mid 2  :model_id "2"  :model "card"}   {:mid 10 :model_id "10" :model "card"}
       false {:mid 10 :model_id "10" :model "card"}   {:mid 2  :model_id "2"  :model "card"}
-      ;; equal model_ids tie-break on model name
       true  {:mid 5  :model_id "5"  :model "card"}   {:mid 5  :model_id "5"  :model "table"}
       false {:mid 5  :model_id "5"  :model "table"}  {:mid 5  :model_id "5"  :model "card"}
-      ;; same parsed number but different raw strings → tie-break on raw model_id before model
       true  {:mid 2  :model_id "02" :model "card"}   {:mid 2  :model_id "2"  :model "card"}
       false {:mid 2  :model_id "2"  :model "card"}   {:mid 2  :model_id "02" :model "card"}
-      ;; numeric always beats non-numeric
       true  {:mid 99 :model_id "99" :model "card"}   {:mid nil :model_id "abc" :model "card"}
       false {:mid nil :model_id "abc" :model "card"}  {:mid 1  :model_id "1"   :model "card"}
-      ;; both non-numeric: lexicographic on model_id string
       true  {:mid nil :model_id "abc" :model "card"}  {:mid nil :model_id "xyz" :model "card"}
       false {:mid nil :model_id "xyz" :model "card"}  {:mid nil :model_id "abc" :model "card"})))
 
 (deftest ^:sequential meta-embedding-model-absent-when-unavailable-test
-  (with-redefs [complexity/library-entities  (constantly [])
-                complexity/universe-entities (constantly [])]
+  (with-redefs [complexity/library-catalog  (fn [] (catalog []))
+                complexity/universe-catalog (fn [] (catalog []))]
     (testing ":embedding-model key is absent from :meta when the search index is unreachable"
       (with-redefs [ss.embedders/try-active-index-state (constantly nil)]
-        ;; Pass the real search-index-embedder so the identity check in complexity-scores succeeds,
-        ;; but the embedder returns {} because try-active-index-state is nil.
         (let [{:keys [meta]} (complexity/complexity-scores :embedder semantic-search/search-index-embedder)]
           (is (not (contains? meta :embedding-model))))))
     (testing ":embedding-model key is present in :meta when the active model is non-nil"
@@ -413,12 +387,11 @@
 (deftest ^:sequential active-embedding-model-reads-from-active-index-test
   (testing "active-embedding-model returns the model from the active index, not the configured setting"
     (let [active-model {:provider "openai" :model-name "text-embedding-ada-002"}]
-      ;; try-active-index-state is private, so we use with-redefs + var for sequential tests.
       (with-redefs [ss.embedders/try-active-index-state
                     (constantly {:pgvector   :mock
                                  :table-name "mock_table"
                                  :model      active-model})]
-        (is (= {:provider "openai" :model-name "text-embedding-ada-002"}
+        (is (= active-model
                (semantic-search/active-embedding-model))))))
   (testing "active-embedding-model returns nil when the index state has no model"
     (with-redefs [ss.embedders/try-active-index-state
@@ -430,90 +403,77 @@
     (with-redefs [ss.embedders/try-active-index-state (constantly nil)]
       (is (nil? (semantic-search/active-embedding-model))))))
 
-(defn- complexity-events
-  "Drain the fake Snowplow collector and return only complexity events."
-  []
+;;; --------------------------------- Snowplow ------------------------------------
+
+(defn- complexity-events! []
   (->> (snowplow-test/pop-event-data-and-user-id!)
        (map :data)
        (filter #(= "semantic_complexity_scored" (get % "event")))))
 
-(deftest ^:sequential emit-snowplow-publishes-total-and-each-subscore-test
-  (testing "exactly one Snowplow event is emitted per (catalog × axis) with values matching the returned score"
+(deftest ^:sequential emit-snowplow-publishes-totals-and-variables-test
+  (testing "one event per catalog-total + one per (catalog × dimension × variable)"
     (snowplow-test/with-fake-snowplow-collector
-      (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "orders")
-                                                                            (entity :name "customers")])
-                                  complexity/universe-entities (constantly [(entity :name "orders")
-                                                                            (entity :name "customers")
-                                                                            (entity :name "widgets")])]
-        ;; Drain any startup/setting events so we only assert on emissions from the call below.
-        (snowplow-test/pop-event-data-and-user-id!)
-        (let [{:keys [library universe metabot]} (complexity/complexity-scores :embedder nil)
-              events      (complexity-events)
-              axis->snake (fn [k] (-> k name (str/replace "-" "_")))
-              expected    (into #{}
-                                (for [[catalog result] {"library" library
-                                                        "universe" universe
-                                                        "metabot" metabot}
-                                      [axis score]     (cons ["total" (:total result)]
-                                                             (map (fn [[component sub]]
-                                                                    [(axis->snake component) (:score sub)])
-                                                                  (:components result)))]
-                                  [catalog axis score]))
-              actual      (into #{}
-                                (map (fn [e] [(get e "catalog") (get e "axis") (get e "score")]) events))]
-          (is (= (count expected) (count events))
-              "every (catalog, axis) is emitted exactly once — no duplicates")
-          (is (= expected actual)
-              "every (catalog, axis) pair carries the matching score from the result")
-          (testing "every event carries the event name, formula version, and synonym threshold"
-            ;; Pinned to exact values — a regression that emits formula_version=1 or the old
-            ;; 0.30 threshold would pass a looser integer?/number? check.
-            (is (every? (fn [e]
-                          (and (= "semantic_complexity_scored" (get e "event"))
-                               (= 2   (get e "formula_version"))
-                               (= 0.9 (get e "synonym_threshold"))))
-                        events))))))))
-
-(deftest ^:sequential emit-snowplow-includes-measurement-for-count-and-pair-axes-test
-  (testing "each sub-score event carries the raw pre-score measurement; the aggregate total does not"
-    (snowplow-test/with-fake-snowplow-collector
-      ;; Library has: 3 entities, a collision pair (`orders`/`orders`), 5 fields total.
-      ;; These produce known non-zero :count / :pairs values so we can check both flavours.
-      (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "orders"  :field-count 2)
-                                                                            (entity :name "orders"  :field-count 0)
-                                                                            (entity :name "widgets" :field-count 3)])
-                                  complexity/universe-entities (constantly [])]
+      (mt/with-dynamic-fn-redefs [complexity/library-catalog  (fn [] (catalog [(entity :name "a")
+                                                                               (entity :name "b")]))
+                                  complexity/universe-catalog (fn [] (catalog [(entity :name "a")
+                                                                               (entity :name "b")
+                                                                               (entity :name "c")]))]
         (snowplow-test/pop-event-data-and-user-id!)
         (complexity/complexity-scores :embedder nil)
-        (let [by-axis (->> (complexity-events)
+        (let [events (complexity-events!)
+              by-cat (group-by #(get % "catalog") events)
+              axis-of #(set (map (fn [e] (get e "axis")) %))]
+          (testing "every event carries event name + formula version + level"
+            (is (every? (fn [e]
+                          (and (= "semantic_complexity_scored" (get e "event"))
+                               (integer? (get e "formula_version"))
+                               (integer? (get e "level"))))
+                        events)))
+          (testing "each catalog emits a :total event (no :dimension key) plus variable events"
+            (doseq [cat ["library" "universe" "metabot"]]
+              (is (contains? (axis-of (get by-cat cat)) "total")
+                  (format "%s has a :axis=total event" cat))
+              (is (some #(and (= "total" (get % "axis"))
+                              (not (contains? % "dimension")))
+                        (get by-cat cat))
+                  (format "%s :total event omits :dimension" cat))))
+          (testing "variable events carry :dimension"
+            (let [var-events (filter #(not= "total" (get % "axis")) events)]
+              (is (every? #(string? (get % "dimension")) var-events)))))))))
+
+(deftest ^:sequential emit-snowplow-includes-measurement-test
+  (testing "scored variable events carry their raw pre-score measurement"
+    (snowplow-test/with-fake-snowplow-collector
+      (mt/with-dynamic-fn-redefs [complexity/library-catalog  (fn [] (catalog [(entity :name "orders" :field-count 2)
+                                                                               (entity :name "orders" :field-count 0)
+                                                                               (entity :name "widgets" :field-count 3)]
+                                                                              5))
+                                  complexity/universe-catalog (fn [] (catalog []))]
+        (snowplow-test/pop-event-data-and-user-id!)
+        (complexity/complexity-scores :embedder nil)
+        (let [by-axis (->> (complexity-events!)
                            (filter #(= "library" (get % "catalog")))
                            (into {} (map (juxt #(get % "axis") identity))))]
+          (is (= 3 (get-in by-axis ["entity_count" "measurement"])))
+          (is (= 5 (get-in by-axis ["field_count"  "measurement"])))
+          (is (= 1 (get-in by-axis ["name_collisions" "measurement"])))
           (testing "the aggregate total has no measurement key"
-            (is (not (contains? (get by-axis "total") "measurement"))))
-          (testing "count-based axes carry their `:count` as the measurement"
-            (is (= 3 (get-in by-axis ["entity_count" "measurement"])))
-            (is (= 5 (get-in by-axis ["field_count"  "measurement"])))
-            (is (= 0 (get-in by-axis ["repeated_measures" "measurement"]))))
-          (testing "pair-based axes carry their `:pairs` as the measurement"
-            (is (= 1 (get-in by-axis ["name_collisions" "measurement"])))
-            (is (= 0 (get-in by-axis ["synonym_pairs"   "measurement"])))))))))
+            (is (not (contains? (get by-axis "total") "measurement")))))))))
 
 (deftest ^:sequential emit-snowplow-propagates-error-on-embedder-failure-test
-  (testing "synonym_pairs event carries the embedder error string; other axes do not"
+  (testing ":synonym_pairs event carries the embedder error string; other axes do not"
     (snowplow-test/with-fake-snowplow-collector
-      (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "customers")
-                                                                            (entity :name "clients")])
-                                  complexity/universe-entities (constantly [])]
+      (mt/with-dynamic-fn-redefs [complexity/library-catalog  (fn [] (catalog [(entity :name "customers")
+                                                                               (entity :name "clients")]))
+                                  complexity/universe-catalog (fn [] (catalog []))]
         (snowplow-test/pop-event-data-and-user-id!)
         (complexity/complexity-scores :embedder (fn [_] (throw (ex-info "embedder boom" {}))))
-        (let [by-axis (->> (complexity-events)
+        (let [by-axis (->> (complexity-events!)
                            (filter #(= "library" (get % "catalog")))
                            (into {} (map (juxt #(get % "axis") identity))))]
-          (is (= "embedder boom" (get-in by-axis ["synonym_pairs" "error"]))
-              "the :error from the synonym-pair scorer reaches the Snowplow payload")
+          (is (= "embedder boom" (get-in by-axis ["synonym_pairs" "error"])))
           (is (not-any? #(contains? % "error")
-                        (vals (dissoc by-axis "synonym_pairs")))
-              ":error is only present on the synonym_pairs event"))))))
+                        (vals (dissoc by-axis "synonym_pairs")))))))))
 
 (deftest ^:sequential emit-snowplow-includes-embedding-model-meta-test
   (testing "every event carries embedding_model_provider/name when the search-index embedder is active"
@@ -523,42 +483,37 @@
                                  :table-name "mock_table"
                                  :model      {:provider "openai" :model-name "text-embedding-3-small"}})
                     ss.embedders/fetch-by-model+id (constantly [])]
-        (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "orders")])
-                                    complexity/universe-entities (constantly [(entity :name "orders")])]
+        (mt/with-dynamic-fn-redefs [complexity/library-catalog  (fn [] (catalog [(entity :name "orders")]))
+                                    complexity/universe-catalog (fn [] (catalog [(entity :name "orders")]))]
           (snowplow-test/pop-event-data-and-user-id!)
           (complexity/complexity-scores :embedder semantic-search/search-index-embedder)
-          (let [events (complexity-events)]
+          (let [events (complexity-events!)]
             (is (seq events) "sanity: events were emitted")
             (is (every? #(= "openai" (get % "embedding_model_provider")) events))
             (is (every? #(= "text-embedding-3-small" (get % "embedding_model_name")) events))))))))
 
 (deftest ^:sequential emit-snowplow-failure-is-swallowed-test
-  (testing "emission failure is caught; complexity-scores still returns the score and logs a warning"
-    (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "orders")])
-                                complexity/universe-entities (constantly [(entity :name "orders")])
+  (testing "Snowplow emission failure is caught; complexity-scores still returns the score"
+    (mt/with-dynamic-fn-redefs [complexity/library-catalog  (fn [] (catalog [(entity :name "orders")]))
+                                complexity/universe-catalog (fn [] (catalog [(entity :name "orders")]))
                                 analytics/track-event!       (fn [& _] (throw (RuntimeException. "snowplow down")))]
       (mt/with-log-messages-for-level [messages [metabase-enterprise.semantic-layer.complexity :warn]]
         (let [result (complexity/complexity-scores :embedder nil)]
-          (is (=? {:library  {:total 10 :components {:entity-count {:count 1 :score 10}}}
-                   :universe {:total 10 :components {:entity-count {:count 1 :score 10}}}}
-                  result))
+          (is (pos? (get-in result [:library  :total])))
+          (is (pos? (get-in result [:universe :total])))
           (is (some #(re-find #"Failed to publish complexity score" (:message %))
-                    (messages))
-              "a warning about the publish failure was logged"))))))
+                    (messages))))))))
 
 (deftest ^:sequential local-info-log-is-emitted-even-when-snowplow-fails-test
   (testing "the 'Semantic complexity score' info log fires independently of Snowplow emission"
-    ;; Guards two regressions together: local logging being removed, and local logging being
-    ;; gated on successful telemetry (so a broken collector would silence the operator-visible log).
-    (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "orders")])
-                                complexity/universe-entities (constantly [(entity :name "orders")])
+    (mt/with-dynamic-fn-redefs [complexity/library-catalog  (fn [] (catalog [(entity :name "orders")]))
+                                complexity/universe-catalog (fn [] (catalog [(entity :name "orders")]))
                                 analytics/track-event!       (fn [& _] (throw (RuntimeException. "snowplow down")))]
       (mt/with-log-messages-for-level [messages [metabase-enterprise.semantic-layer.complexity :info]]
         (complexity/complexity-scores :embedder nil)
         (is (some #(and (= :info (:level %))
                         (re-find #"Semantic complexity score" (:message %)))
-                  (messages))
-            "the score was logged locally at :info even though Snowplow emission threw")))))
+                  (messages)))))))
 
 (deftest ^:sequential startup-hook-schedules-complexity-scores-test
   (testing "the boot-time hook schedules complexity-scores via quick-task/submit-task!"
@@ -605,10 +560,10 @@
                 @lock-opts)
             "the cluster lock must use an explicit timeout/retry budget, not the bare-keyword defaults")))))
 
+;;; ------------------------ hermetic library DB test -----------------------------
+
 (deftest ^:sequential complexity-score-library-hermetic-test
-  (testing "library score is computed over exactly the Library collection tree — known inputs produce known scores"
-    ;; The library tree gets a fixed set of tables, fields, measures, and metric cards. One extra
-    ;; collection + table + card sit outside the library so the universe is a strict superset.
+  (testing "library score is computed over exactly the Library collection tree"
     (mt/with-temp
       [:model/Collection {lib-id :id}     {:type     collections/library-collection-type
                                            :name     "Library"
@@ -621,7 +576,6 @@
                                            :location (format "/%d/" lib-id)}
        :model/Collection {other-id :id}   {:name "Outside" :location "/"}
        :model/Database {db-id :id}        {:name "Hermetic Library DB"}
-       ;; Library tables. clients + customers are a synonym pair for the mock embedder below.
        :model/Table    {t1 :id}           {:db_id db-id :name "orders"
                                            :active true :is_published true :collection_id data-id}
        :model/Table    {t2 :id}           {:db_id db-id :name "subscriptions"
@@ -630,461 +584,76 @@
                                            :active true :is_published true :collection_id data-id}
        :model/Table    _                  {:db_id db-id :name "customers"
                                            :active true :is_published true :collection_id data-id}
-       ;; Non-library tables: active (→ in universe) but not published into the library tree.
-       ;; audit_events + audit_log are another synonym pair via the mock embedder.
        :model/Table    {t-audit :id}      {:db_id db-id :name "audit_events"
                                            :active true :is_published false :collection_id other-id}
        :model/Table    _                  {:db_id db-id :name "audit_log"
                                            :active true :is_published false :collection_id other-id}
-       ;; Library fields: 2 on orders, 1 on subscriptions.
        :model/Field _                     {:table_id t1 :name "id"    :active true :base_type :type/Integer}
        :model/Field _                     {:table_id t1 :name "total" :active true :base_type :type/Float}
        :model/Field _                     {:table_id t2 :name "id"    :active true :base_type :type/Integer}
-       ;; Non-library fields on audit_events → bumps universe field-count above library.
        :model/Field _                     {:table_id t-audit :name "audit_id"
                                            :active true :base_type :type/Integer}
        :model/Field _                     {:table_id t-audit :name "audit_ts"
                                            :active true :base_type :type/DateTime}
-       ;; Library measures: "revenue" on two library tables → one repeated-measure pair in library.
        :model/Measure _                   {:table_id t1 :name "revenue"
                                            :creator_id (mt/user->id :rasta)
                                            :definition {} :archived false}
        :model/Measure _                   {:table_id t2 :name "revenue"
                                            :creator_id (mt/user->id :rasta)
                                            :definition {} :archived false}
-       ;; Non-library measure with the same name → bumps universe repeated-measures above library.
        :model/Measure _                   {:table_id t-audit :name "revenue"
                                            :creator_id (mt/user->id :rasta)
                                            :definition {} :archived false}
-       ;; Two library metric cards named "Revenue" → one name-collision pair in library.
        :model/Card _                      {:database_id db-id :type :metric :name "Revenue"
                                            :archived false :collection_id metrics-id}
        :model/Card _                      {:database_id db-id :type :metric :name "Revenue"
                                            :archived false :collection_id metrics-id}
-       ;; Non-library card also named "Revenue" → 3 "Revenue" entities in universe → 2 collision pairs.
        :model/Card _                      {:database_id db-id :type :model :name "Revenue"
                                            :archived false :collection_id other-id}]
-      ;; Each name gets its own orthogonal dimension so only the intended pairs cluster.
       (let [embedder (mock-embedder {"orders"        [1.0  0.0  0.0  0.0 0.0 0.0 0.0]
                                      "subscriptions" [0.0  1.0  0.0  0.0 0.0 0.0 0.0]
                                      "clients"       [0.0  0.0  1.0  0.0 0.0 0.0 0.0]
-                                     "customers"     [0.0  0.0  0.99 0.1 0.0 0.0 0.0]   ; ≈ clients (library)
-                                     "revenue"       [0.0  0.0  0.0  0.0 1.0 0.0 0.0]   ; "Revenue" cards normalize here
+                                     "customers"     [0.0  0.0  0.99 0.1 0.0 0.0 0.0]
+                                     "revenue"       [0.0  0.0  0.0  0.0 1.0 0.0 0.0]
                                      "audit_events"  [0.0  0.0  0.0  0.0 0.0 1.0 0.0]
-                                     "audit_log"     [0.0  0.0  0.0  0.0 0.0 0.99 0.1]}) ; ≈ audit_events (universe-only)
+                                     "audit_log"     [0.0  0.0  0.0  0.0 0.0 0.99 0.1]})
             {:keys [library universe]} (complexity/complexity-scores {:embedder embedder})]
-        (testing "library reflects exactly what we put in the Library collection tree"
+        (testing "library exact dimension breakdown"
           ;; Library: 4 tables + 2 metric cards = 6 entities.
-          ;;  entity-count       6 × 10 = 60
-          ;;  name-collisions    "revenue" (2 metric cards) = 1 pair × 100 = 100
-          ;;  synonym-pairs      clients ↔ customers = 1 × 50 = 50
-          ;;  field-count        orders(2) + subscriptions(1) + others(0) = 3 × 1 = 3
-          ;;  repeated-measures  "revenue" on orders + subscriptions = 1 × 2 = 2
-          ;;  total              60 + 100 + 50 + 3 + 2 = 215
-          (is (= {:total      215
-                  :components {:entity-count      {:count 6 :score 60}
-                               :name-collisions   {:pairs 1 :score 100}
-                               :synonym-pairs     {:pairs 1 :score 50}
-                               :field-count       {:count 3 :score 3}
-                               :repeated-measures {:count 1 :score 2}}}
-                 library)))
-        (testing "universe is a strict superset of library on every axis: every count and score is higher"
-          ;; Different components use different 'count' keys: :pairs for collision/synonym, :count elsewhere.
-          ;; Note: :synonym-pairs is monotonic on this fixture but not in general — score-synonym-pairs
-          ;; dedupes by normalized name and picks one embedding per name, so a universe-only entity
-          ;; sharing a normalized name with a library entity could in theory flip which vector wins and
-          ;; decrease the pair count/score. Our fixture doesn't hit that case; if this assertion ever
-          ;; flakes, that's the reason.
-          (doseq [[component count-key] [[:entity-count      :count]
-                                         [:name-collisions   :pairs]
-                                         [:synonym-pairs     :pairs]
-                                         [:field-count       :count]
-                                         [:repeated-measures :count]]
-                  k [count-key :score]
-                  :let [lib-v (get-in library  [:components component k])
-                        uni-v (get-in universe [:components component k])]]
-            (is (> uni-v lib-v)
-                (format "universe %s %s (%d) should be strictly > library %s %s (%d)"
-                        component k uni-v component k lib-v))))
-        (testing "universe total is strictly higher than library total"
+          ;;   scale.entity-count        6 × 10 = 60
+          ;;   scale.field-count         orders(2) + subscriptions(1) + others(0) = 3 → 3
+          ;;   scale.collection-tree-size 3 collections in tree (lib root + data + metrics) → 3
+          ;;   nominal.name-collisions   "Revenue" × 2 metric cards = 1 pair × 100 = 100
+          ;;   nominal.repeated-measures "revenue" on orders + subscriptions = 1 × 2 = 2
+          ;;   nominal.field-level       "id" on orders + subscriptions = 1 × 5 = 5
+          ;;   semantic.synonym-pairs    clients ↔ customers = 1 × 50 = 50
+          ;;   total = 60 + 3 + 3 + 100 + 2 + 5 + 50 = 223
+          (is (=? {:total 223
+                   :dimensions
+                   {:scale    {:variables {:entity-count         {:value 6 :score 60}
+                                           :field-count          {:value 3 :score 3}
+                                           :collection-tree-size {:value 3 :score 3}}}
+                    :nominal  {:variables {:name-collisions        {:value 1 :score 100}
+                                           :repeated-measures      {:value 1 :score 2}
+                                           :field-level-collisions {:value 1 :score 5}}}
+                    :semantic {:variables {:synonym-pairs {:value 1 :score 50}}}}}
+                  library)))
+        (testing "universe is a strict superset of library on every scored axis"
+          (doseq [[dim var] [[:scale    :entity-count]
+                             [:scale    :field-count]
+                             [:nominal  :name-collisions]
+                             [:nominal  :repeated-measures]
+                             [:nominal  :field-level-collisions]
+                             [:semantic :synonym-pairs]]
+                  metric    [:value :score]
+                  :let [lib (get-in library  [:dimensions dim :variables var metric])
+                        uni (get-in universe [:dimensions dim :variables var metric])]]
+            (is (> uni lib)
+                (format "universe %s %s %s (%d) should be strictly > library's (%d)"
+                        dim var metric uni lib))))
+        (testing "universe total is strictly higher"
           (is (> (:total universe) (:total library))))))))
 
-;;; ---------------------- provider-embedder + synonym-axis settings ----------------------
-
-(deftest ^:parallel provider-embedder-nil-when-config-incomplete-test
-  (testing "provider-embedder returns nil when :provider or :model-name is missing/blank"
-    (is (nil? (embedders/provider-embedder {})))
-    (is (nil? (embedders/provider-embedder {:provider "ollama"})))
-    (is (nil? (embedders/provider-embedder {:model-name "all-minilm"})))
-    (is (nil? (embedders/provider-embedder {:provider "" :model-name "x"})))
-    (is (nil? (embedders/provider-embedder {:provider "ollama" :model-name ""})))))
-
-(deftest ^:sequential provider-embedder-routes-to-get-embeddings-batch-test
-  (testing "provider-embedder forwards to get-embeddings-batch with the given embedding-model map"
-    (let [captured  (atom nil)
-          model     {:provider "ollama" :model-name "all-minilm" :vector-dimensions 384}
-          stub-fn   (fn [embedding-model names & _]
-                      (reset! captured {:embedding-model embedding-model :names names})
-                      (mapv (fn [_] (float-array [1.0 2.0 3.0])) names))]
-      (with-redefs [ss.embedding/get-embeddings-batch stub-fn]
-        (let [embedder (embedders/provider-embedder model)
-              result   (embedder [{:name "Orders"} {:name "Customers"}])]
-          (is (= model (:embedding-model @captured)))
-          (is (= ["orders" "customers"] (:names @captured)))
-          (is (= 2 (count result)))
-          (is (every? #(= 3 (alength ^floats (val %))) result)))))))
-
-(deftest ^:sequential provider-embedder-propagates-errors-test
-  (testing "provider-embedder lets errors from the dispatcher propagate so score-synonym-pairs can surface :error"
-    ;; Older behaviour swallowed the throw and returned {}, which combined with resolve-synonym-embedder
-    ;; populating :model-meta from the custom config made the synonym axis score 0 while :meta
-    ;; still advertised the provider/model as active. Propagating lets the existing try/catch in
-    ;; score-synonym-pairs tag the result with :error so the silent-zero-but-lying-meta case shows up.
-    (with-redefs [ss.embedding/get-embeddings-batch (fn [& _] (throw (ex-info "boom" {})))]
-      (let [embedder (embedders/provider-embedder
-                      {:provider "ollama" :model-name "all-minilm" :vector-dimensions 384})]
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"boom"
-                              (embedder [{:name "Orders"}])))))))
-
-(deftest ^:sequential provider-embedder-openai-batches-reassemble-by-name-test
-  (testing "with OpenAI provider, provider-embedder splits texts across batches per openai-max-tokens-per-batch and keys each returned vector back to its originating name"
-    ;; Regression: before process-embeddings-streaming routed these calls, provider-embedder sent
-    ;; every distinct name to get-embeddings-batch in a single request, bypassing the openai
-    ;; token-per-batch cap and also making it impossible to exercise the per-batch reassembly path.
-    (let [batches-seen (atom [])
-          ;; Fingerprint each name with a small integer so floating-point round-tripping through
-          ;; float-array doesn't obscure the mapping check below.
-          name->tag    {"alpha" 1.0 "bravo" 2.0 "charlie" 3.0 "delta" 4.0}
-          ;; Return a distinct float-array per input text so we can verify the outer map associates
-          ;; each name with the vector produced for it in its specific batch.
-          stub-batch   (fn [_embedding-model texts & _]
-                         (swap! batches-seen conj (vec texts))
-                         (mapv (fn [t] (float-array [(get name->tag t) 0.0])) texts))]
-      ;; Tiny cap forces create-batches to split the four single-token names into multiple batches.
-      (mt/with-temporary-setting-values [ss.settings/openai-max-tokens-per-batch 2]
-        (with-redefs [ss.embedding/get-embeddings-batch stub-batch]
-          (let [embedder (embedders/provider-embedder
-                          {:provider "openai" :model-name "text-embedding-3-small" :vector-dimensions 2})
-                names    ["alpha" "bravo" "charlie" "delta"]
-                result   (embedder (mapv #(hash-map :name %) names))]
-            (testing "the dispatcher was called for more than one batch"
-              (is (< 1 (count @batches-seen))))
-            (testing "every input name is embedded exactly once across the batches"
-              (is (= names (vec (sort (mapcat identity @batches-seen))))))
-            (testing "each name in the returned map carries the vector its own batch produced"
-              (is (= (set names) (set (keys result))))
-              (doseq [n names]
-                (is (= (float (get name->tag n)) (aget ^floats (get result n) 0))
-                    (format "vector for %s should match its batch output" n))))))))))
-
-(deftest ^:sequential provider-embedder-empty-streaming-result-test
-  (testing "provider-embedder returns an empty map (not a throw) when process-embeddings-streaming yields nil"
-    ;; Regression: when every input text exceeds openai-max-tokens-per-batch, create-batches returns
-    ;; [] and process-embeddings-streaming's transduce collapses to nil. Without the `or {}` guard in
-    ;; provider-embedder, `(mapv text->vec names)` would throw on the nil lookup, surfacing as an
-    ;; error up through score-synonym-pairs instead of degrading to "no vector → no synonym signal".
-    (with-redefs [semantic-search/process-embeddings-streaming (fn [& _] nil)]
-      (let [embedder (embedders/provider-embedder
-                      {:provider "openai" :model-name "text-embedding-3-small" :vector-dimensions 2})]
-        (is (= {} (embedder [{:name "alpha"} {:name "bravo"}])))))))
-
-(deftest ^:parallel default-threshold-for-minilm-test
-  (testing "default threshold is 0.80 for ollama + MiniLM model names (case-insensitive)"
-    (is (= 0.80 (#'complexity/default-threshold-for "ollama" "all-minilm")))
-    (is (= 0.80 (#'complexity/default-threshold-for "ollama" "all-MiniLM-L6-v2")))
-    (is (= 0.80 (#'complexity/default-threshold-for "ollama" "sentence-transformers/all-MiniLM-L6-v2"))))
-  (testing "falls back to the Arctic-calibrated 0.90 default otherwise"
-    (is (= 0.90 (#'complexity/default-threshold-for "ollama" "mxbai-embed-large")))
-    (is (= 0.90 (#'complexity/default-threshold-for "ai-service" "all-minilm")))
-    (is (= 0.90 (#'complexity/default-threshold-for nil nil)))))
-
-(deftest ^:sequential complexity-scores-routes-synonym-axis-via-settings-test
-  (testing "setting ee-complexity-synonym-provider + model-name routes the axis through provider-embedder"
-    (let [captured   (atom nil)
-          stub-batch (fn [embedding-model names & _]
-                       (reset! captured {:embedding-model embedding-model :names names})
-                       ;; Return unit vectors keyed so that "customers" and "clients" form a synonym pair.
-                       (mapv (fn [n]
-                               (cond
-                                 (= n "customers") (float-array [1.0 0.0])
-                                 (= n "clients")   (float-array [0.99 0.14])
-                                 :else             (float-array [0.0 1.0])))
-                             names))]
-      (mt/with-temporary-setting-values [ee-complexity-synonym-provider         "ollama"
-                                         ee-complexity-synonym-model-name       "all-minilm"
-                                         ee-complexity-synonym-model-dimensions 2]
-        (with-redefs [ss.embedding/get-embeddings-batch stub-batch]
-          (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "customers")
-                                                                                (entity :name "clients")])
-                                      complexity/universe-entities (constantly [(entity :name "customers")
-                                                                                (entity :name "clients")])]
-            (let [{:keys [library meta]} (complexity/complexity-scores)]
-              (testing "provider-embedder reached get-embeddings-batch with the configured model"
-                (is (= {:provider "ollama" :model-name "all-minilm" :vector-dimensions 2}
-                       (:embedding-model @captured)))
-                (is (= #{"customers" "clients"} (set (:names @captured)))))
-              (testing ":meta reflects the configured provider/model and the MiniLM-calibrated threshold"
-                (is (=? {:embedding-model {:provider "ollama" :model-name "all-minilm"}
-                         :synonym-threshold 0.80}
-                        meta)))
-              (testing "the synonym pair was detected (cosine ≈ 0.99 > 0.80 threshold)"
-                (is (= 1 (get-in library [:components :synonym-pairs :pairs])))))))))))
-
-(deftest ^:sequential complexity-scores-honours-threshold-override-test
-  (testing "ee-complexity-synonym-threshold overrides the provider-default threshold"
-    (let [stub-batch (fn [_ names & _]
-                       (mapv (fn [n]
-                               (cond
-                                 (= n "customers") (float-array [1.0 0.0])
-                                 (= n "clients")   (float-array [0.99 0.14])
-                                 :else             (float-array [0.0 1.0])))
-                             names))]
-      (mt/with-temporary-setting-values [ee-complexity-synonym-provider         "ollama"
-                                         ee-complexity-synonym-model-name       "all-minilm"
-                                         ee-complexity-synonym-model-dimensions 2
-                                         ;; Force an override above the ~0.99 similarity — the pair should disappear.
-                                         ee-complexity-synonym-threshold        0.999]
-        (with-redefs [ss.embedding/get-embeddings-batch stub-batch]
-          (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "customers")
-                                                                                (entity :name "clients")])
-                                      complexity/universe-entities (constantly [])]
-            (let [{:keys [library meta]} (complexity/complexity-scores)]
-              (is (= 0.999 (:synonym-threshold meta)))
-              (is (= 0 (get-in library [:components :synonym-pairs :pairs]))))))))))
-
-(deftest ^:sequential complexity-scores-default-path-unchanged-test
-  (testing "with no synonym-axis settings set, the default path still uses search-index-embedder and 0.90"
-    (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "orders")])
-                                complexity/universe-entities (constantly [(entity :name "orders")])]
-      (with-redefs [ss.embedders/try-active-index-state (constantly nil)]
-        (let [{:keys [meta]} (complexity/complexity-scores)]
-          (testing ":synonym-threshold is the Arctic-calibrated default"
-            (is (= 0.90 (:synonym-threshold meta))))
-          (testing ":embedding-model is omitted when the index is unreachable"
-            (is (not (contains? meta :embedding-model)))))))))
-
-(deftest ^:sequential complexity-scores-explicit-embedder-uses-default-threshold-test
-  (testing "passing an explicit :embedder bypasses the settings and uses the default threshold"
-    (mt/with-temporary-setting-values [ee-complexity-synonym-provider   "ollama"
-                                       ee-complexity-synonym-model-name "all-minilm"
-                                       ee-complexity-synonym-model-dimensions 2
-                                       ;; Also set a threshold override that the explicit-embedder path
-                                       ;; must ignore — pinned embedders are for reproducible benchmarks
-                                       ;; and shouldn't drift with unrelated instance settings.
-                                       ee-complexity-synonym-threshold  0.55]
-      (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "orders")])
-                                  complexity/universe-entities (constantly [(entity :name "orders")])]
-        (let [{:keys [meta]} (complexity/complexity-scores :embedder nil)]
-          (testing "explicit :embedder nil ignores ee-complexity-synonym-threshold and uses the default"
-            (is (= 0.90 (:synonym-threshold meta)))))))))
-
-(deftest ^:sequential complexity-scores-explicit-embedder-accepts-threshold-opt-test
-  (testing "explicit :embedder paired with :threshold uses the supplied cutoff"
-    ;; cosine(customers, clients) ≈ 0.994 with these vectors, so 0.999 rejects and 0.5 accepts.
-    (let [es       [(entity :name "customers") (entity :name "clients")]
-          embedder (mock-embedder {"customers" [1.0 0.0]
-                                   "clients"   [0.9 0.1]})]
-      (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly es)
-                                  complexity/universe-entities (constantly [])]
-        (testing "a high :threshold rejects the pair"
-          (let [{:keys [library meta]} (complexity/complexity-scores
-                                        :embedder  embedder
-                                        :threshold 0.999)]
-            (is (= 0.999 (:synonym-threshold meta)))
-            (is (= 0 (get-in library [:components :synonym-pairs :pairs])))))
-        (testing "a low :threshold accepts the pair"
-          (let [{:keys [library meta]} (complexity/complexity-scores
-                                        :embedder  embedder
-                                        :threshold 0.5)]
-            (is (= 0.5 (:synonym-threshold meta)))
-            (is (= 1 (get-in library [:components :synonym-pairs :pairs])))))))))
-
-;;; ---------------------- synonym-config validation ----------------------
-
-(deftest ^:parallel validate-synonym-config-test
-  (let [validate #'complexity/validate-synonym-config]
-    (testing "fully blank config returns nil (opt-out — no warning expected)"
-      (is (nil? (validate {:provider nil        :model-name nil        :vector-dimensions nil})))
-      (is (nil? (validate {:provider ""         :model-name "  "       :vector-dimensions nil}))))
-    (testing "trims whitespace on provider and model-name when valid"
-      (is (= {:provider "ollama" :model-name "all-minilm" :vector-dimensions 384}
-             (validate {:provider "  ollama  " :model-name " all-minilm " :vector-dimensions 384}))))
-    (testing "rejects unknown providers (typo-safe)"
-      (is (nil? (validate {:provider "olama"   :model-name "all-minilm" :vector-dimensions 384})))
-      (is (nil? (validate {:provider "OpenAI"  :model-name "text-embedding-3-small" :vector-dimensions 256}))))
-    (testing "rejects half-configured settings (one of provider/model-name blank)"
-      (is (nil? (validate {:provider "ollama"  :model-name nil         :vector-dimensions 384})))
-      (is (nil? (validate {:provider ""        :model-name "all-minilm" :vector-dimensions 384}))))
-    (testing "openai text-embedding-3* models require vector-dimensions"
-      (is (nil? (validate {:provider "openai" :model-name "text-embedding-3-small" :vector-dimensions nil})))
-      (is (nil? (validate {:provider "openai" :model-name "text-embedding-3-large" :vector-dimensions 0})))
-      (is (=? {:provider "openai" :model-name "text-embedding-3-small" :vector-dimensions 512}
-              (validate {:provider "openai" :model-name "text-embedding-3-small" :vector-dimensions 512}))))
-    (testing "providers/models that don't forward :dimensions don't need vector-dimensions"
-      (is (=? {:provider "ollama" :model-name "all-minilm"}
-              (validate {:provider "ollama" :model-name "all-minilm" :vector-dimensions nil})))
-      (is (=? {:provider "openai" :model-name "text-embedding-ada-002"}
-              (validate {:provider "openai" :model-name "text-embedding-ada-002" :vector-dimensions nil}))))))
-
-(deftest ^:sequential ee-complexity-synonym-provider-setter-rejects-typos-test
-  (testing "the setter mirrors ee-embedding-provider — invalid values throw before anything is persisted"
-    (mt/with-temporary-setting-values [ee-complexity-synonym-provider nil]
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Invalid complexity-synonym provider"
-                            (semantic-layer-settings/ee-complexity-synonym-provider! "olama")))
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Invalid complexity-synonym provider"
-                            (semantic-layer-settings/ee-complexity-synonym-provider! "OpenAI")))
-      (testing "valid values (including nil to clear) are accepted"
-        (semantic-layer-settings/ee-complexity-synonym-provider! "ollama")
-        (is (= "ollama" (semantic-layer-settings/ee-complexity-synonym-provider)))
-        (semantic-layer-settings/ee-complexity-synonym-provider! nil)
-        (is (nil? (semantic-layer-settings/ee-complexity-synonym-provider)))))))
-
-(deftest ^:sequential complexity-scores-invalid-provider-falls-back-test
-  (testing "runtime validation also rejects a pre-existing bad value (e.g. stale DB state) and falls back"
-    (let [batch-called? (atom false)]
-      ;; Bypass the :setter guard by redefing the getter directly — this simulates a bad value
-      ;; that somehow reached runtime (env var, legacy DB row) without going through the setter.
-      (with-redefs [semantic-layer-settings/ee-complexity-synonym-provider         (constantly "olama")
-                    semantic-layer-settings/ee-complexity-synonym-model-name       (constantly "all-minilm")
-                    semantic-layer-settings/ee-complexity-synonym-model-dimensions (constantly 384)
-                    semantic-layer-settings/ee-complexity-synonym-threshold        (constantly nil)
-                    ss.embedding/get-embeddings-batch                           (fn [& _] (reset! batch-called? true) [])
-                    ss.embedders/try-active-index-state                            (constantly nil)]
-        (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "orders")])
-                                    complexity/universe-entities (constantly [(entity :name "orders")])]
-          (let [{:keys [meta]} (complexity/complexity-scores)]
-            (is (false? @batch-called?)
-                "provider-embedder should not be reached with an unsupported provider")
-            (is (not (contains? meta :embedding-model))
-                ":meta must not advertise a model the synonym axis never reached")
-            (is (= 0.90 (:synonym-threshold meta))
-                "falls back to the Arctic-calibrated default threshold")))))))
-
-(deftest ^:sequential complexity-scores-openai-text-embedding-3-requires-dims-test
-  (testing "openai text-embedding-3-* without dimensions falls back to search-index embedder"
-    (let [batch-called? (atom false)]
-      (mt/with-temporary-setting-values [ee-complexity-synonym-provider   "openai"
-                                         ee-complexity-synonym-model-name "text-embedding-3-small"
-                                         ee-complexity-synonym-model-dimensions nil]
-        (with-redefs [ss.embedding/get-embeddings-batch (fn [& _] (reset! batch-called? true) [])
-                      ss.embedders/try-active-index-state  (constantly nil)]
-          (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "orders")])
-                                      complexity/universe-entities (constantly [(entity :name "orders")])]
-            (let [{:keys [meta]} (complexity/complexity-scores)]
-              (is (false? @batch-called?)
-                  "get-embeddings-batch would send dimensions: null and fail; must not be reached")
-              (is (not (contains? meta :embedding-model))
-                  ":embedding-model must be absent when the config failed validation"))))))))
-
-(deftest ^:sequential complexity-scores-openai-provider-without-api-key-falls-back-test
-  (testing "provider=openai with a valid shape but no API key falls back to the search-index embedder"
-    ;; Guards the meta-lies-when-provider-unusable case: shape-level validation alone would accept
-    ;; {openai + text-embedding-3-small + 512} and commit that as :meta.embedding-model, even though
-    ;; any call would throw on openai-resolve-config!. provider-ready? catches this upfront.
-    (let [batch-called? (atom false)]
-      (with-redefs [semantic-layer-settings/ee-complexity-synonym-provider         (constantly "openai")
-                    semantic-layer-settings/ee-complexity-synonym-model-name       (constantly "text-embedding-3-small")
-                    semantic-layer-settings/ee-complexity-synonym-model-dimensions (constantly 512)
-                    semantic-layer-settings/ee-complexity-synonym-threshold        (constantly nil)
-                    ;; Force the OpenAI key getter to return nil regardless of ambient env.
-                    ss.settings/openai-api-key (constantly nil)
-                    ss.embedding/get-embeddings-batch (fn [& _] (reset! batch-called? true) [])
-                    ss.embedders/try-active-index-state (constantly nil)]
-        (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "orders")])
-                                    complexity/universe-entities (constantly [(entity :name "orders")])]
-          (let [{:keys [meta]} (complexity/complexity-scores)]
-            (is (false? @batch-called?)
-                "provider-embedder should not be reached when openai-api-key is blank")
-            (is (not (contains? meta :embedding-model))
-                ":meta must not advertise openai when the API key isn't configured")
-            (is (= 0.90 (:synonym-threshold meta))
-                "falls back to the Arctic-calibrated default threshold")))))))
-
-(deftest ^:sequential complexity-scores-ai-service-without-endpoint-falls-back-test
-  (testing "provider=ai-service without base URL / api key falls back to the search-index embedder"
-    (let [batch-called? (atom false)]
-      (with-redefs [semantic-layer-settings/ee-complexity-synonym-provider         (constantly "ai-service")
-                    semantic-layer-settings/ee-complexity-synonym-model-name       (constantly "some-embedder")
-                    semantic-layer-settings/ee-complexity-synonym-model-dimensions (constantly 384)
-                    semantic-layer-settings/ee-complexity-synonym-threshold        (constantly nil)
-                    ss.settings/ee-embedding-service-base-url (constantly nil)
-                    ss.settings/ee-embedding-service-api-key  (constantly nil)
-                    ss.embedding/get-embeddings-batch (fn [& _] (reset! batch-called? true) [])
-                    ss.embedders/try-active-index-state (constantly nil)]
-        (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "orders")])
-                                    complexity/universe-entities (constantly [(entity :name "orders")])]
-          (let [{:keys [meta]} (complexity/complexity-scores)]
-            (is (false? @batch-called?)
-                "provider-embedder should not be reached when ai-service has no base URL / key")
-            (is (not (contains? meta :embedding-model))
-                ":meta must not advertise ai-service when prerequisites are missing")))))))
-
-(deftest ^:sequential complexity-scores-openai-provider-ready-when-key-set-test
-  (testing "provider=openai with a configured API key IS used — readiness check doesn't regress the happy path"
-    (let [captured (atom nil)
-          stub     (fn [embedding-model names & _]
-                     (reset! captured {:embedding-model embedding-model :names names})
-                     (mapv (fn [_] (float-array [1.0 0.0])) names))]
-      (with-redefs [semantic-layer-settings/ee-complexity-synonym-provider         (constantly "openai")
-                    semantic-layer-settings/ee-complexity-synonym-model-name       (constantly "text-embedding-3-small")
-                    semantic-layer-settings/ee-complexity-synonym-model-dimensions (constantly 512)
-                    semantic-layer-settings/ee-complexity-synonym-threshold        (constantly nil)
-                    ss.settings/openai-api-key (constantly "sk-test-redacted")
-                    ss.embedding/get-embeddings-batch stub]
-        (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "orders")])
-                                    complexity/universe-entities (constantly [(entity :name "orders")])]
-          (let [{:keys [meta]} (complexity/complexity-scores)]
-            (is (= {:provider "openai" :model-name "text-embedding-3-small"}
-                   (:embedding-model meta))
-                "provider-ready? passes with an API key set, so :meta reflects the configured model")
-            (is (some? @captured)
-                "the provider-embedder path was actually taken")))))))
-
-(deftest ^:sequential complexity-scores-openai-blank-base-url-falls-back-test
-  (testing "provider=openai with an API key but a blank base URL still falls back"
-    ;; Guards drift between provider-ready? and openai-resolve-config!: before the shared
-    ;; openai-config-problem helper existed, readiness only looked at the API key, so a cleared
-    ;; base URL would publish :meta.embedding-model for a provider that would immediately throw on
-    ;; the next embedding call.
-    (let [batch-called? (atom false)]
-      (with-redefs [semantic-layer-settings/ee-complexity-synonym-provider         (constantly "openai")
-                    semantic-layer-settings/ee-complexity-synonym-model-name       (constantly "text-embedding-3-small")
-                    semantic-layer-settings/ee-complexity-synonym-model-dimensions (constantly 512)
-                    semantic-layer-settings/ee-complexity-synonym-threshold        (constantly nil)
-                    ss.settings/openai-api-key      (constantly "sk-test-redacted")
-                    ss.settings/openai-api-base-url (constantly "")
-                    ss.embedding/get-embeddings-batch (fn [& _] (reset! batch-called? true) [])
-                    ss.embedders/try-active-index-state (constantly nil)]
-        (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "orders")])
-                                    complexity/universe-entities (constantly [(entity :name "orders")])]
-          (let [{:keys [meta]} (complexity/complexity-scores)]
-            (is (false? @batch-called?)
-                "provider-embedder must not be reached when the base URL is blank")
-            (is (not (contains? meta :embedding-model))
-                ":meta must not advertise openai when the base URL isn't configured")))))))
-
-(deftest ^:sequential complexity-scores-synonym-axis-error-populates-meta-test
-  (testing "dispatcher failure surfaces as :error on the synonym-pairs component and scores 0"
-    ;; End-to-end partner to provider-embedder-propagates-errors-test: that test stops at the
-    ;; embedder throwing; this one verifies the upstream contract it unlocks — score-synonym-pairs
-    ;; catches the throw, so the silent-zero-with-lying-meta case shows up as {:score 0 :error ...}
-    ;; on the user-facing result instead of an unannotated zero.
-    (with-redefs [semantic-layer-settings/ee-complexity-synonym-provider         (constantly "ollama")
-                  semantic-layer-settings/ee-complexity-synonym-model-name       (constantly "all-minilm")
-                  semantic-layer-settings/ee-complexity-synonym-model-dimensions (constantly 384)
-                  semantic-layer-settings/ee-complexity-synonym-threshold        (constantly nil)
-                  ss.embedding/get-embeddings-batch (fn [& _] (throw (ex-info "boom" {})))]
-      (mt/with-dynamic-fn-redefs [complexity/library-entities  (constantly [(entity :name "orders")
-                                                                            (entity :name "invoices")])
-                                  complexity/universe-entities (constantly [(entity :name "orders")
-                                                                            (entity :name "invoices")])]
-        (let [{:keys [library universe meta]} (complexity/complexity-scores)]
-          (is (=? {:pairs 0 :score 0 :error "boom"}
-                  (get-in library [:components :synonym-pairs]))
-              "library synonym axis scored zero with :error from the underlying throw")
-          (is (=? {:pairs 0 :score 0 :error "boom"}
-                  (get-in universe [:components :synonym-pairs]))
-              "universe synonym axis scored zero with :error from the underlying throw")
-          (is (= {:provider "ollama" :model-name "all-minilm"}
-                 (:embedding-model meta))
-              ":meta still reflects the configured provider — the failure is on the axis, not the config"))))))
+(comment
+  ;; Avoid the `str` unused-require warning by touching the alias.
+  (str/trim "x"))

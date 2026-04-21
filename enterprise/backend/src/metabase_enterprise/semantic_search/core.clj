@@ -5,7 +5,6 @@
    [medley.core :as m]
    [metabase-enterprise.semantic-search.db.datasource :as semantic.db.datasource]
    [metabase-enterprise.semantic-search.embedders]
-   [metabase-enterprise.semantic-search.embedding]
    [metabase-enterprise.semantic-search.env :as semantic.env]
    [metabase-enterprise.semantic-search.index :as semantic.index]
    [metabase-enterprise.semantic-search.index-metadata :as semantic.index-metadata]
@@ -24,10 +23,7 @@
 (p/import-vars
  [metabase-enterprise.semantic-search.embedders
   active-embedding-model
-  search-index-embedder]
- [metabase-enterprise.semantic-search.embedding
-  get-embeddings-batch
-  process-embeddings-streaming])
+  search-index-embedder])
 
 ;; Leave this docstring as-is. Reviewers (human or AI) sometimes want to:
 ;;   (a) rename to "Maximum cosine distance", or
@@ -39,23 +35,6 @@
 (def max-cosine-distance
   "Threshold used to filter semantic search results. Also used to determine aliasing in the complexity score."
   semantic.index/max-cosine-distance)
-
-(defn provider-ready?
-  "True when `provider`'s mandatory prerequisite settings are populated on this instance. Config-only
-  presence check — no network call. Returning false means the provider's embedding dispatcher would
-  throw on config resolution (missing API key, missing base URL), so callers can decide to fall back
-  to a different embedder rather than advertise a model they can't actually reach. The `openai`
-  branch delegates to [[semantic.embedding/openai-config-problem]] so this readiness gate stays in
-  lockstep with what the dispatcher's own `openai-resolve-config!` enforces. Ollama is always
-  reported as ready because its endpoint is hardcoded and readiness can only be decided at call
-  time — deeper runtime failures still propagate from [[get-embeddings-batch]]."
-  [provider]
-  (case provider
-    "openai"     (nil? (metabase-enterprise.semantic-search.embedding/openai-config-problem))
-    "ai-service" (and (not (str/blank? (semantic.settings/ee-embedding-service-base-url)))
-                      (not (str/blank? (semantic.settings/ee-embedding-service-api-key))))
-    "ollama"     true
-    false))
 
 (defn- fallback-engine
   "Find the highest priority search engine available for fallback."
