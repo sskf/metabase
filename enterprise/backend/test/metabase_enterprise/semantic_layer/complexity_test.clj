@@ -9,6 +9,7 @@
    [metabase-enterprise.semantic-search.embedders :as ss.embedders]
    [metabase.analytics.core :as analytics]
    [metabase.analytics.snowplow-test :as snowplow-test]
+   [metabase.app-db.cluster-lock :as cluster-lock]
    [metabase.collections.core :as collections]
    [metabase.collections.test-utils :as collections.tu]
    [metabase.startup.core :as startup]
@@ -558,30 +559,48 @@
 
 (deftest ^:sequential startup-hook-schedules-complexity-scores-test
   (testing "the boot-time hook schedules complexity-scores via quick-task/submit-task!"
-    ;; Guards three regressions together:
+    ;; Guards four regressions together:
     ;; 1. A regression that calls `complexity-scores` directly instead of via `submit-task!`
     ;;    would still produce the old test's info-log assertion, but fails this test because
     ;;    `submit-task!` was never invoked.
     ;; 2. A regression that turned the hook body into a no-op would fail `scored?` here.
     ;; 3. `complexity-scores` is stubbed so the test exercises only the startup wiring — not
     ;;    the real search-index embedder or Snowplow collector.
+    ;; 4. A regression that removes the `cluster-lock/with-cluster-lock` wrapper would fail the
+    ;;    assertion that the lock was taken around scoring, reintroducing the multi-node
+    ;;    concurrent-scoring bug.
     (let [submitted?    (atom false)
           scored?       (atom false)
-          score-args    (atom nil)]
+          score-args    (atom nil)
+          lock-opts     (atom nil)
+          locked-during-score? (atom false)]
       (with-redefs [quick-task/submit-task!         (fn [task]
                                                       (reset! submitted? true)
                                                       (task)
                                                       nil)
+                    cluster-lock/do-with-cluster-lock (fn [opts thunk]
+                                                        (reset! lock-opts opts)
+                                                        (thunk))
                     complexity/complexity-scores    (fn [& args]
                                                       (reset! scored? true)
                                                       (reset! score-args args)
+                                                      (reset! locked-during-score?
+                                                              (some? @lock-opts))
                                                       {})
                     analytics/track-event!          (fn [& _] nil)
                     semantic-search/search-index-embedder (constantly {})]
         (startup/def-startup-logic! ::init/PublishSemanticComplexityScore)
         (is (true? @submitted?) "the startup hook must schedule its work via quick-task/submit-task!")
         (is (true? @scored?)    "the scheduled task must invoke complexity/complexity-scores")
-        (is (empty? @score-args) "the startup hook calls complexity-scores with no args")))))
+        (is (empty? @score-args) "the startup hook calls complexity-scores with no args")
+        (is (true? @locked-during-score?)
+            "scoring must run inside cluster-lock/with-cluster-lock")
+        (is (=? {:lock :metabase-enterprise.semantic-layer.init/publish-complexity-score-lock
+                 :timeout-seconds pos-int?
+                 :retry-config {:max-retries pos-int?
+                                :delay-ms    pos-int?}}
+                @lock-opts)
+            "the cluster lock must use an explicit timeout/retry budget, not the bare-keyword defaults")))))
 
 (deftest ^:sequential complexity-score-library-hermetic-test
   (testing "library score is computed over exactly the Library collection tree — known inputs produce known scores"
