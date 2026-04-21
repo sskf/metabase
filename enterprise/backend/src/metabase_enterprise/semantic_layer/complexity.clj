@@ -269,8 +269,8 @@
 
 (defn- emit-catalog-snowplow!
   "Emit Snowplow events for one catalog. One event per (catalog × axis) — `axis=total` at the
-  catalog level, then one per `(dimension, variable)` below. Matches the v1 emission shape as
-  closely as possible; new v3 fields (`dimension`, `measurement` on ratios) are additive."
+  catalog level, then one per `(dimension, variable)` below. Events conform to
+  `semantic_complexity` schema 2-0-0."
   [catalog {:keys [dimensions total]} base]
   (analytics/track-event!
    :snowplow/semantic_complexity
@@ -288,12 +288,12 @@
 
 (defn- emit-snowplow! [{:keys [library universe metabot meta]}]
   (let [{:keys [formula-version synonym-threshold embedding-model level]} meta
-        base (cond-> {:event             :semantic_complexity_scored
-                      :formula_version   formula-version
-                      :level             level
-                      :synonym_threshold synonym-threshold}
-               embedding-model (assoc :embedding_model_provider (:provider embedding-model)
-                                      :embedding_model_name    (:model-name embedding-model)))]
+        base (cond-> {:event           :semantic_complexity_scored
+                      :formula_version formula-version
+                      :level           level}
+               synonym-threshold (assoc :synonym_threshold synonym-threshold)
+               embedding-model   (assoc :embedding_model_provider (:provider embedding-model)
+                                        :embedding_model_name     (:model-name embedding-model)))]
     (doseq [[catalog result] [[:library library] [:universe universe] [:metabot metabot]]]
       (emit-catalog-snowplow! catalog result base))))
 
