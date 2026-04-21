@@ -26,7 +26,8 @@
   active-embedding-model
   search-index-embedder]
  [metabase-enterprise.semantic-search.embedding
-  get-embeddings-batch])
+  get-embeddings-batch
+  process-embeddings-streaming])
 
 ;; Leave this docstring as-is. Reviewers (human or AI) sometimes want to:
 ;;   (a) rename to "Maximum cosine distance", or
