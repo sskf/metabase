@@ -303,7 +303,8 @@
     "no_models"
     "timeline"
     "table"
-    "transform"})
+    "transform"
+    "measure"})
 
 (def ^:private ModelString
   (into [:enum] valid-model-param-values))
@@ -605,9 +606,9 @@
         skip-adhoc-hydration?  (u/prog1 (and include-can-run-adhoc-query
                                              (pos? threshold)
                                              (> card-count threshold))
-                                 (when <>
-                                   (log/warnf "Skipping can_run_adhoc_query hydration for %d cards (threshold: %d)"
-                                              card-count threshold)))
+                                        (when <>
+                                          (log/warnf "Skipping can_run_adhoc_query hydration for %d cards (threshold: %d)"
+                                                     card-count threshold)))
         hydration              (cond-> [:can_write
                                         :can_restore
                                         :can_delete
@@ -896,8 +897,12 @@
             update-personal-collection)))))
 
 (defmethod post-process-collection-children :table
-  [_ _ _collection rows]
-  (map #(update % :archived api/bit->boolean) rows))
+  [_ {:keys [models]} _collection rows]
+  (let [tables (map #(-> (t2/instance :model/Table %)
+                         (update :archived api/bit->boolean)) rows)]
+    (if (contains? models :measure)
+      (t2/hydrate tables :measures)
+      tables)))
 
 ;;; TODO -- consider whether this function belongs here or in [[metabase.revisions.models.revision.last-edit]]
 (mu/defn- coalesce-edit-info :- revisions/MaybeAnnotated
@@ -1448,8 +1453,8 @@
             (-> (apply-defaults-to-collection coll-data)
                 write-check-authority-level
                 validate-new-tenant-collection!))
-    (events/publish-event! :event/collection-create {:object <> :user-id api/*current-user-id*})
-    (events/publish-event! :event/collection-touch {:collection-id (:id <>) :user-id api/*current-user-id*})))
+           (events/publish-event! :event/collection-create {:object <> :user-id api/*current-user-id*})
+           (events/publish-event! :event/collection-touch {:collection-id (:id <>) :user-id api/*current-user-id*})))
 
 ;; TODO (Cam 2025-11-25) please add a response schema to this API endpoint, it makes it easier for our customers to
 ;; use our API + we will need it when we make auto-TypeScript-signature generation happen
@@ -1743,4 +1748,4 @@
                                                                                                        (not (collection/is-trash? collection)))
                                                                                                 true
                                                                                                 (boolean official_collections_first))}})
-      (events/publish-event! :event/collection-read {:object collection :user-id api/*current-user-id*}))))
+             (events/publish-event! :event/collection-read {:object collection :user-id api/*current-user-id*}))))

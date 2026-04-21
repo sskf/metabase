@@ -25,6 +25,7 @@ export interface MiniPickerContextValue {
   onBrowseAll?: () => void;
   libraryCollection?: MiniPickerCollectionItem;
   shouldShowLibrary?: boolean;
+  forceSearch?: boolean;
 }
 
 export const MiniPickerContext = createContext<

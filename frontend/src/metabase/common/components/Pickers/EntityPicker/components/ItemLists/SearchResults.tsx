@@ -16,7 +16,12 @@ import {
 } from "metabase/ui";
 import { getIcon } from "metabase/utils/icon";
 
-import type { OmniPickerItem, OmniPickerTableItem, SearchScope } from "../..";
+import type {
+  OmniPickerItem,
+  OmniPickerMeasureItem,
+  OmniPickerTableItem,
+  SearchScope,
+} from "../..";
 import { useOmniPickerContext } from "../../context";
 import {
   useCurrentSearchScope,
@@ -134,6 +139,10 @@ const isTableInDb = (item: OmniPickerItem): item is OmniPickerTableItem => {
   );
 };
 
+const isMeasure = (item: OmniPickerItem): item is OmniPickerMeasureItem => {
+  return item.model === "measure";
+};
+
 const getItemText = (item: OmniPickerItem) => {
   const isTable = isTableInDb(item);
 
@@ -143,6 +152,10 @@ const getItemText = (item: OmniPickerItem) => {
 
   if (item.model === "database") {
     return "";
+  }
+
+  if (isMeasure(item)) {
+    return item.table_name;
   }
 
   return isTable
@@ -157,6 +170,10 @@ const getLocationIcon = (item: OmniPickerItem) => {
     item.model === "database"
   ) {
     return null;
+  }
+
+  if (item.model === "measure") {
+    return { name: "table" as const };
   }
 
   return getIcon({

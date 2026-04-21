@@ -55,12 +55,12 @@
 (def DBEngineString
   "Schema for a valid database engine name, e.g. `h2` or `postgres`."
   (mu/with-api-error-message
-   [:and
-    ms/NonBlankString
-    [:fn
-     {:error/message "Valid database engine"}
-     #(u/ignore-exceptions (driver/the-driver %))]]
-   (deferred-tru "value must be a valid database engine.")))
+    [:and
+     ms/NonBlankString
+     [:fn
+      {:error/message "Valid database engine"}
+      #(u/ignore-exceptions (driver/the-driver %))]]
+    (deferred-tru "value must be a valid database engine.")))
 
 ;;; ----------------------------------------------- GET /api/database ------------------------------------------------
 
@@ -361,8 +361,8 @@
            router_database_id can-query can-write-metadata]}
    :- [:map
        [:include                     {:optional true} (mu/with-api-error-message
-                                                       [:maybe [:= "tables"]]
-                                                       (deferred-tru "include must be either empty or the value ''tables''"))]
+                                                        [:maybe [:= "tables"]]
+                                                        (deferred-tru "include must be either empty or the value ''tables''"))]
        [:include_analytics           {:default false} [:maybe :boolean]]
        [:saved                       {:default false} [:maybe :boolean]]
        [:include_editable_data_model {:default false} [:maybe :boolean]]
@@ -1501,13 +1501,13 @@
                                          (sync.schedules/schedule-map->cron-strings schedules))
                                        (when (some? auto_run_queries)
                                          {:auto_run_queries auto_run_queries})))))
-        (events/publish-event! :event/database-create {:object <> :user-id api/*current-user-id*})
-        (analytics/track-event! :snowplow/database
-                                {:event        :database-connection-successful
-                                 :database     engine
-                                 :database-id  (u/the-id <>)
-                                 :source       connection_source
-                                 :dbms-version (:version (driver/dbms-version (keyword engine) <>))}))
+               (events/publish-event! :event/database-create {:object <> :user-id api/*current-user-id*})
+               (analytics/track-event! :snowplow/database
+                                       {:event        :database-connection-successful
+                                        :database     engine
+                                        :database-id  (u/the-id <>)
+                                        :source       connection_source
+                                        :dbms-version (:version (driver/dbms-version (keyword engine) <>))}))
       ;; failed to connect, return error
       (do
         (analytics/track-event! :snowplow/database
@@ -1735,11 +1735,11 @@
   (api/check-superuser)
   (t2/with-transaction [_conn]
     (api/let-404 [db (t2/select-one :model/Database :id id)]
-      (api/check-403 (mi/can-write? db))
-      (t2/delete! :model/Database :router_database_id id)
-      (database-routing/delete-associated-database-router! id)
-      (t2/delete! :model/Database :id id)
-      (events/publish-event! :event/database-delete {:object db :user-id api/*current-user-id*})))
+                 (api/check-403 (mi/can-write? db))
+                 (t2/delete! :model/Database :router_database_id id)
+                 (database-routing/delete-associated-database-router! id)
+                 (t2/delete! :model/Database :id id)
+                 (events/publish-event! :event/database-delete {:object db :user-id api/*current-user-id*})))
   api/generic-204-no-content)
 
 ;;; ------------------------------------------ POST /api/database/:id/sync_schema -------------------------------------------
@@ -1829,12 +1829,12 @@
     ;; but no data perms, they should stll be able to trigger a sync of field values. This is fine because we don't
     ;; return any actual field values from this API. (#21764)
     (request/as-admin
-      (database-routing/with-database-routing-off
-        (if *rescan-values-async*
-          (quick-task/submit-task!
-           (fn []
-             (sync/update-field-values! db)))
-          (sync/update-field-values! db)))))
+     (database-routing/with-database-routing-off
+       (if *rescan-values-async*
+         (quick-task/submit-task!
+          (fn []
+            (sync/update-field-values! db)))
+         (sync/update-field-values! db)))))
   {:status :ok})
 
 (defn- delete-all-field-values-for-database! [database-or-id]
@@ -1912,8 +1912,8 @@
   (let [filter-schemas (fn [schemas]
                          (if include-editable-data-model?
                            (if-let [f (u/ignore-exceptions
-                                        (classloader/require 'metabase-enterprise.advanced-permissions.common)
-                                        (resolve 'metabase-enterprise.advanced-permissions.common/filter-schema-by-data-model-perms))]
+                                       (classloader/require 'metabase-enterprise.advanced-permissions.common)
+                                       (resolve 'metabase-enterprise.advanced-permissions.common/filter-schema-by-data-model-perms))]
                              (map :schema (f (map (fn [s] {:db_id id :schema s}) schemas)))
                              schemas)
                            (filter (partial can-read-schema? id) schemas)))
@@ -2003,7 +2003,7 @@
 (defn- schema-tables-list
   ([db-id schema]
    (schema-tables-list db-id schema {}))
-  ([db-id schema {:keys [include-hidden? include-editable-data-model? can-query? can-write-metadata?]}]
+  ([db-id schema {:keys [include-hidden? include-editable-data-model? can-query? can-write-metadata? include-measures?]}]
    (when-not include-editable-data-model?
      (api/read-check :model/Database db-id)
      (api/check-403 (can-read-schema? db-id schema)))
@@ -2029,7 +2029,8 @@
                             can-query?          (filter mi/can-query?)
                             can-write-metadata? (filter mi/can-write?))
          hydration-keys   (cond-> []
-                            (premium-features/has-feature? :transforms-basic)   (conj :transform))]
+                            (premium-features/has-feature? :transforms-basic)   (conj :transform)
+                            include-measures? (conj :measures))]
      (if (seq hydration-keys)
        (apply t2/hydrate filtered-tables hydration-keys)
        filtered-tables))))
@@ -2051,18 +2052,20 @@
   [{:keys [id schema]} :- [:map
                            [:id ms/PositiveInt]
                            [:schema ms/NonBlankString]]
-   {:keys [include_hidden include_editable_data_model can-query can-write-metadata]} :- [:map
-                                                                                         [:include_hidden              {:default false} [:maybe ms/BooleanValue]]
-                                                                                         [:include_editable_data_model {:default false} [:maybe ms/BooleanValue]]
-                                                                                         [:can-query                   {:optional true} [:maybe :boolean]]
-                                                                                         [:can-write-metadata          {:optional true} [:maybe :boolean]]]]
+   {:keys [include_hidden include_editable_data_model can-query can-write-metadata include_measures]} :- [:map
+                                                                                                          [:include_hidden              {:default false} [:maybe ms/BooleanValue]]
+                                                                                                          [:include_editable_data_model {:default false} [:maybe ms/BooleanValue]]
+                                                                                                          [:can-query                   {:optional true} [:maybe :boolean]]
+                                                                                                          [:can-write-metadata          {:optional true} [:maybe :boolean]]
+                                                                                                          [:include_measures            {:optional true} [:maybe :boolean]]]]
   (api/check-404 (seq (schema-tables-list
                        id
                        schema
                        {:include-hidden?              include_hidden
                         :include-editable-data-model? include_editable_data_model
                         :can-query?                   can-query
-                        :can-write-metadata?          can-write-metadata}))))
+                        :can-write-metadata?          can-write-metadata
+                        :include-measures?            include_measures}))))
 
 ;; TODO (Cam 10/28/25) -- fix this endpoint so it uses kebab-case for query parameters for consistency with the rest
 ;; of the REST API
@@ -2080,15 +2083,17 @@
   - `can-write-metadata=true` - filter to only tables the user can edit metadata for"
   [{:keys [id]} :- [:map
                     [:id ms/PositiveInt]]
-   {:keys [include_hidden include_editable_data_model can-query can-write-metadata]} :- [:map
-                                                                                         [:include_hidden              {:default false} [:maybe ms/BooleanValue]]
-                                                                                         [:include_editable_data_model {:default false} [:maybe ms/BooleanValue]]
-                                                                                         [:can-query                   {:optional true} [:maybe :boolean]]
-                                                                                         [:can-write-metadata          {:optional true} [:maybe :boolean]]]]
+   {:keys [include_hidden include_editable_data_model can-query can-write-metadata include_measures]} :- [:map
+                                                                                                          [:include_hidden              {:default false} [:maybe ms/BooleanValue]]
+                                                                                                          [:include_editable_data_model {:default false} [:maybe ms/BooleanValue]]
+                                                                                                          [:can-query                   {:optional true} [:maybe :boolean]]
+                                                                                                          [:can-write-metadata          {:optional true} [:maybe :boolean]]
+                                                                                                          [:include_measures            {:optional true} [:maybe :boolean]]]]
   (let [opts {:include-hidden?              include_hidden
               :include-editable-data-model? include_editable_data_model
               :can-query?                   can-query
-              :can-write-metadata?          can-write-metadata}]
+              :can-write-metadata?          can-write-metadata
+              :include-measures?            include_measures}]
     (api/check-404 (seq (concat (schema-tables-list id nil opts)
                                 (schema-tables-list id "" opts))))))
 

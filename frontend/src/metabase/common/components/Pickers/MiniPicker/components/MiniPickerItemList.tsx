@@ -40,6 +40,7 @@ import { useMiniPickerContext } from "../context";
 import type {
   MiniPickerCollectionItem,
   MiniPickerDatabaseItem,
+  MiniPickerMeasureItem,
   MiniPickerPickableItem,
   MiniPickerSchemaItem,
   MiniPickerTableItem,
@@ -50,10 +51,10 @@ import { MiniPickerItem } from "./MiniPickerItem";
 import styles from "./MiniPickerItem.module.css";
 
 export function MiniPickerItemList() {
-  const { path, searchQuery } = useMiniPickerContext();
+  const { path, searchQuery, forceSearch } = useMiniPickerContext();
 
-  if (searchQuery) {
-    return <SearchItemList query={searchQuery} />;
+  if (searchQuery || forceSearch) {
+    return <SearchItemList query={searchQuery ?? ""} />;
   }
 
   if (path.length === 0) {
@@ -400,6 +401,10 @@ export const MiniPickerListLoader = () => (
   </Stack>
 );
 
+const ItemList = ({ children }: { children: React.ReactNode[] }) => {
+  return <VirtualizedList extraPadding={2}>{children}</VirtualizedList>;
+};
+
 const isTableInDb = (
   item: MiniPickerPickableItem,
 ): item is MiniPickerTableItem => {
@@ -412,27 +417,37 @@ const isTableInDb = (
   );
 };
 
-const ItemList = ({ children }: { children: React.ReactNode[] }) => {
-  return <VirtualizedList extraPadding={2}>{children}</VirtualizedList>;
+const isMeasure = (
+  item: MiniPickerPickableItem,
+): item is MiniPickerMeasureItem => {
+  return item.model === "measure";
+};
+
+const getLocationDetails = (item: MiniPickerPickableItem) => {
+  if (isTableInDb(item)) {
+    return {
+      itemText: `${item.database_name}${item.table_schema ? ` (${item.table_schema})` : ""}`,
+      iconProps: null,
+    };
+  } else if (isMeasure(item)) {
+    return {
+      itemText: item.table_name,
+      iconProps: { name: "table" as const },
+    };
+  } else {
+    return {
+      itemText: item?.collection?.name ?? t`Our analytics`,
+      iconProps: getIcon({ ...item.collection, model: "collection" }),
+    };
+  }
 };
 
 const LocationInfo = ({ item }: { item: MiniPickerPickableItem }) => {
-  const isTable = isTableInDb(item);
-
-  const itemText = isTable
-    ? `${item.database_name}${item.table_schema ? ` (${item.table_schema})` : ""}`
-    : (item?.collection?.name ?? t`Our analytics`);
+  const { itemText, iconProps } = getLocationDetails(item);
 
   if (!itemText) {
     return null;
   }
-
-  const iconProps = isTable
-    ? null
-    : getIcon({
-        ...item.collection,
-        model: "collection",
-      });
 
   return (
     <Flex gap="xs" align="center" ml="auto" style={{ overflow: "hidden" }}>

@@ -27,6 +27,7 @@ export type MiniPickerProps = {
   onBrowseAll?: () => void;
   shouldHide?: (item: MiniPickerItem | unknown) => boolean;
   shouldShowLibrary?: boolean;
+  forceSearch?: boolean;
   children?: React.ReactNode;
   menuDropdownProps?: MenuDropdownProps;
   closeOnClickOutside?: boolean;
@@ -45,6 +46,7 @@ export function MiniPicker({
   trapFocus = false,
   shouldHide,
   shouldShowLibrary = true,
+  forceSearch = false,
   children = <Box />,
   menuDropdownProps,
   closeOnClickOutside = true,
@@ -94,6 +96,7 @@ export function MiniPicker({
         canBrowse: !!onBrowseAll,
         libraryCollection,
         shouldShowLibrary,
+        forceSearch,
       }}
     >
       <Menu
