@@ -74,9 +74,6 @@ describe("scenarios > embedding-sdk > use-metabot hook", () => {
       body: metabotResponseWithNavigateTo,
     });
 
-    // Catch-all intercept to see if ANY request goes to metabot endpoints.
-    cy.intercept("POST", "**/api/metabot/**").as("anyMetabotCall");
-
     cy.signOut();
     mockAuthProviderAndJwtSignIn();
   });
