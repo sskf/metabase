@@ -19,7 +19,7 @@ describe(
       H.activateToken("pro-self-hosted");
     });
 
-    it("shows Light and Dark default themes on first visit", () => {
+    it("lazily seeds Light and Dark on first visit, and preserves admin deletions across reloads", () => {
       cy.visit("/admin/embedding/themes");
 
       cy.log("theme is visible in embedding sidebar");
@@ -28,27 +28,30 @@ describe(
         .should("be.visible");
 
       H.main().within(() => {
-        cy.log("default Light and Dark themes are seeded");
+        cy.log(
+          "default Light and Dark themes are seeded lazily on first visit",
+        );
         cy.findByText("Light").should("be.visible");
         cy.findByText("Dark").should("be.visible");
-
-        cy.log("create a theme");
-        cy.findByRole("button", { name: /New theme/ }).click();
       });
 
-      cy.log("navigates to the theme editor page");
-      cy.url().should("match", /\/admin\/embedding\/themes\/\d+/);
-    });
-
-    it("shows empty state when all themes are deleted", () => {
+      cy.log("admin deletes the seeded defaults");
       deleteAllThemes();
-      cy.visit("/admin/embedding/themes");
+      cy.reload();
 
       H.main().within(() => {
+        cy.log("empty state is shown; defaults are not re-created");
+        cy.findByText("Light").should("not.exist");
+        cy.findByText("Dark").should("not.exist");
         cy.findByText("Create your first theme to get started").should(
           "be.visible",
         );
+
+        cy.log("clicking New theme navigates to the editor");
+        cy.findByRole("button", { name: /New theme/ }).click();
       });
+
+      cy.url().should("match", /\/admin\/embedding\/themes\/\d+/);
     });
 
     it("navigates to theme editor when clicking an existing theme card", () => {
