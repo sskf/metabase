@@ -1,16 +1,25 @@
 import { useCallback, useMemo, useRef } from "react";
 import { match } from "ts-pattern";
 
+import { ComponentProvider } from "embedding-sdk-bundle/components/public/ComponentProvider";
 import { InteractiveQuestionInternal } from "embedding-sdk-bundle/components/public/InteractiveQuestion";
 import { StaticQuestionInternal } from "embedding-sdk-bundle/components/public/StaticQuestion";
+import type { SdkStore } from "embedding-sdk-bundle/store/types";
+import type { MetabaseAuthConfig } from "embedding-sdk-bundle/types";
 import type {
   MetabotChartProps,
   MetabotMessage,
   UseMetabotResult,
 } from "embedding-sdk-bundle/types/metabot";
+import { useMetabaseProviderPropsStore } from "embedding-sdk-shared/hooks/use-metabase-provider-props-store";
 import { useMetabotAgent } from "metabase/metabot/hooks";
 import { useMetabotReactions } from "metabase/metabot/hooks/use-metabot-reactions";
 import type { MetabotChatMessage } from "metabase/metabot/state/types";
+
+type ChartComponentContext = {
+  authConfig: MetabaseAuthConfig;
+  reduxStore: SdkStore;
+};
 
 /**
  * Public-facing hook for interacting with Metabot in the SDK.
@@ -25,12 +34,33 @@ export const useMetabot = (): UseMetabotResult => {
     new Map<string, ReturnType<typeof createChartComponent>>(),
   );
 
+  const {
+    state: {
+      props: metabaseProviderProps,
+      internalProps: { reduxStore },
+    },
+  } = useMetabaseProviderPropsStore();
+
+  const chartContext = useMemo<ChartComponentContext | null>(() => {
+    if (!metabaseProviderProps?.authConfig || !reduxStore) {
+      return null;
+    }
+    return {
+      authConfig: metabaseProviderProps.authConfig,
+      reduxStore,
+    };
+  }, [metabaseProviderProps?.authConfig, reduxStore]);
+
   const CurrentChart = useMemo(
     () =>
-      navigateToPath
-        ? getCachedChartComponent(navigateToPath, chartComponentsCache.current)
+      navigateToPath && chartContext
+        ? getCachedChartComponent(
+            navigateToPath,
+            chartComponentsCache.current,
+            chartContext,
+          )
         : null,
-    [navigateToPath],
+    [navigateToPath, chartContext],
   );
 
   const agentSubmitMessage = agent.submitInput;
@@ -55,8 +85,10 @@ export const useMetabot = (): UseMetabotResult => {
     () =>
       agent.messages
         .filter(isPublicMessage)
-        .map((message) => mapMessage(message, chartComponentsCache.current)),
-    [agent.messages],
+        .map((message) =>
+          mapMessage(message, chartComponentsCache.current, chartContext),
+        ),
+    [agent.messages, chartContext],
   );
 
   return {
@@ -77,22 +109,45 @@ export const useMetabot = (): UseMetabotResult => {
  * Creates a chart component bound to a `navigateTo` path.
  * `drills={false}` (default) renders a StaticQuestion;
  * `drills={true}` renders an InteractiveQuestion.
+ *
+ * The returned component wraps its content in a `ComponentProvider` so that
+ * callers of `useMetabot()` can render charts under a bare `MetabaseProvider`
+ * (without a surrounding `ComponentProvider`/`MetabotQuestion`). Nested
+ * `ComponentProvider` instances are idempotent: `isDataUninitialized()`
+ * short-circuits the init dispatch, and `EnsureSingleInstance` dedupes
+ * CSS/fonts/portal rendering.
  */
-function createChartComponent(questionPath: string) {
+function createChartComponent(
+  questionPath: string,
+  context: ChartComponentContext,
+) {
   return function MetabotChart({ drills, ...rest }: MetabotChartProps) {
-    if (drills) {
-      return <InteractiveQuestionInternal query={questionPath} {...rest} />;
-    }
-    return <StaticQuestionInternal query={questionPath} {...rest} />;
+    return (
+      <ComponentProvider
+        authConfig={context.authConfig}
+        reduxStore={context.reduxStore}
+      >
+        {drills ? (
+          <InteractiveQuestionInternal query={questionPath} {...rest} />
+        ) : (
+          <StaticQuestionInternal query={questionPath} {...rest} />
+        )}
+      </ComponentProvider>
+    );
   };
 }
 
 function getCachedChartComponent(
   questionPath: string,
   cache: Map<string, ReturnType<typeof createChartComponent>>,
+  context: ChartComponentContext,
 ) {
+  // Cache key is `questionPath` only by design. The cache lives in a
+  // `useRef` on `useMetabot`, so it is torn down with the hook call; store
+  // identity can only change via a subscriber remount, which resets the
+  // cache naturally.
   if (!cache.has(questionPath)) {
-    cache.set(questionPath, createChartComponent(questionPath));
+    cache.set(questionPath, createChartComponent(questionPath, context));
   }
   return cache.get(questionPath)!;
 }
@@ -116,6 +171,7 @@ const isPublicMessage = (
 const mapMessage = (
   message: PublicChatMessage,
   cache: Map<string, ReturnType<typeof createChartComponent>>,
+  context: ChartComponentContext | null,
 ): MetabotMessage =>
   match(message)
     .with(
@@ -128,15 +184,21 @@ const mapMessage = (
       ({ id, message }) =>
         ({ id, role: "agent", type: "text", message }) as const,
     )
-    .with(
-      { role: "agent", type: "chart" },
-      ({ id, navigateTo }) =>
-        ({
-          id,
-          role: "agent",
-          type: "chart",
-          questionPath: navigateTo,
-          Chart: getCachedChartComponent(navigateTo, cache),
-        }) as const,
-    )
+    .with({ role: "agent", type: "chart" }, ({ id, navigateTo }) => {
+      const Component = context
+        ? getCachedChartComponent(navigateTo, cache, context)
+        : FallbackChartComponent;
+      return {
+        id,
+        role: "agent",
+        type: "chart",
+        questionPath: navigateTo,
+        Component,
+      } as const;
+    })
     .exhaustive();
+
+// Rendered only when `useMetabot` is called outside a `MetabaseProvider`
+// with authConfig + reduxStore populated. In normal usage this branch is
+// unreachable; keeping a placeholder preserves the message shape.
+const FallbackChartComponent = () => null;
