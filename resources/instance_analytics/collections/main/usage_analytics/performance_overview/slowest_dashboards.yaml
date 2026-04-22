@@ -103,7 +103,7 @@ result_metadata:
   table_id: [Internal Metabase Database, public, v_content]
   visibility_type: normal
   lib/breakout?: true
-  lib/card-id: 118
+  lib/card-id: 568
   lib/deduplicated-name: name
   lib/desired-column-alias: Content - Dashboard Qualified__name
   lib/from-model?: true
@@ -133,7 +133,7 @@ result_metadata:
   unit: week
   visibility_type: normal
   lib/breakout?: true
-  lib/card-id: 116
+  lib/card-id: 566
   lib/deduplicated-name: started_at
   lib/desired-column-alias: started_at
   lib/from-model?: true
@@ -142,7 +142,6 @@ result_metadata:
   lib/source: source/previous-stage
   lib/source-column-alias: started_at
   lib/temporal-unit: week
-  qp/implicit-field?: true
 - active: true
   base_type: type/Integer
   database_type: int4
@@ -159,7 +158,7 @@ result_metadata:
   table_id: [Internal Metabase Database, public, v_query_log]
   visibility_type: normal
   lib/breakout?: true
-  lib/card-id: 116
+  lib/card-id: 566
   lib/deduplicated-name: dashboard_id
   lib/desired-column-alias: dashboard_id
   lib/from-model?: true
@@ -167,7 +166,6 @@ result_metadata:
   lib/original-name: dashboard_id
   lib/source: source/previous-stage
   lib/source-column-alias: dashboard_id
-  qp/implicit-field?: true
 - base_type: type/Float
   display_name: Max of Running Time Seconds
   effective_type: type/Float

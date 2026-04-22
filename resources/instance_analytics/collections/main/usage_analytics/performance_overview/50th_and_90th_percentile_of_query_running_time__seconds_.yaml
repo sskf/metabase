@@ -54,8 +54,8 @@ result_metadata:
   effective_type: type/DateTimeWithLocalTZ
   field_ref:
   - field
-  - [Internal Metabase Database, public, v_query_log, started_at]
-  - {temporal-unit: week}
+  - started_at
+  - {base-type: type/DateTimeWithLocalTZ, temporal-unit: week}
   id: [Internal Metabase Database, public, v_query_log, started_at]
   inherited_temporal_unit: week
   name: started_at
@@ -66,7 +66,7 @@ result_metadata:
   unit: week
   visibility_type: normal
   lib/breakout?: true
-  lib/card-id: 116
+  lib/card-id: 566
   lib/deduplicated-name: started_at
   lib/desired-column-alias: started_at
   lib/from-model?: true
@@ -75,7 +75,6 @@ result_metadata:
   lib/source: source/previous-stage
   lib/source-column-alias: started_at
   lib/temporal-unit: week
-  qp/implicit-field?: true
 - base_type: type/Float
   display_name: Percentile 90
   effective_type: type/Float

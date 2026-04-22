@@ -14,7 +14,53 @@ parameter_mappings: []
 dataset_query:
   database: Internal Metabase Database
   stages:
-  - source-table: [Internal Metabase Database, public, v_users]
+  - fields:
+    - - field
+      - {base-type: type/Integer, effective-type: type/Integer}
+      - [Internal Metabase Database, public, v_users, user_id]
+    - - field
+      - {base-type: type/Text, effective-type: type/Text}
+      - [Internal Metabase Database, public, v_users, entity_qualified_id]
+    - - field
+      - {base-type: type/Text, effective-type: type/Text}
+      - [Internal Metabase Database, public, v_users, type]
+    - - field
+      - {base-type: type/Text, effective-type: type/Text}
+      - [Internal Metabase Database, public, v_users, email]
+    - - field
+      - {base-type: type/Text, effective-type: type/Text}
+      - [Internal Metabase Database, public, v_users, first_name]
+    - - field
+      - {base-type: type/Text, effective-type: type/Text}
+      - [Internal Metabase Database, public, v_users, last_name]
+    - - field
+      - {base-type: type/Text, effective-type: type/Text}
+      - [Internal Metabase Database, public, v_users, full_name]
+    - - field
+      - {base-type: type/DateTimeWithLocalTZ, effective-type: type/DateTimeWithLocalTZ}
+      - [Internal Metabase Database, public, v_users, date_joined]
+    - - field
+      - {base-type: type/DateTimeWithLocalTZ, effective-type: type/DateTimeWithLocalTZ}
+      - [Internal Metabase Database, public, v_users, last_login]
+    - - field
+      - {base-type: type/DateTime, effective-type: type/DateTime}
+      - [Internal Metabase Database, public, v_users, updated_at]
+    - - field
+      - {base-type: type/Boolean, effective-type: type/Boolean}
+      - [Internal Metabase Database, public, v_users, is_admin]
+    - - field
+      - {base-type: type/Boolean, effective-type: type/Boolean}
+      - [Internal Metabase Database, public, v_users, is_active]
+    - - field
+      - {base-type: type/Text, effective-type: type/Text}
+      - [Internal Metabase Database, public, v_users, sso_source]
+    - - field
+      - {base-type: type/Text, effective-type: type/Text}
+      - [Internal Metabase Database, public, v_users, locale]
+    - - field
+      - {base-type: type/Integer, effective-type: type/Integer}
+      - [Internal Metabase Database, public, v_users, tenant_id]
+    source-table: [Internal Metabase Database, public, v_users]
     lib/type: mbql.stage/mbql
   lib/type: mbql/query
 result_metadata:
@@ -229,6 +275,21 @@ result_metadata:
   id: [Internal Metabase Database, public, v_users, locale]
   name: locale
   semantic_type: null
+  settings: null
+  visibility_type: normal
+- base_type: type/Integer
+  coercion_strategy: null
+  description: null
+  display_name: Tenant ID
+  effective_type: type/Integer
+  field_ref:
+  - field
+  - [Internal Metabase Database, public, v_users, tenant_id]
+  - null
+  fk_target_field_id: [Internal Metabase Database, public, v_tenants, tenant_id]
+  id: [Internal Metabase Database, public, v_users, tenant_id]
+  name: tenant_id
+  semantic_type: type/FK
   settings: null
   visibility_type: normal
 visualization_settings: {column_settings: null, table.cell_column: locale, table.pivot_column: sso_source}

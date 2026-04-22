@@ -302,65 +302,6 @@ dashcards:
   - {id: DHMhMa1FYxiyIgM7_xdgR, model: Dashboard}
   - {id: VLzpbzPlShrECFp-dG4pH, model: DashboardTab}
   - {id: 44ekjEv02wPsWKcE9BYl0, model: DashboardCard}
-- entity_id: hsKfpF3yEcMhoD-o_Zdn0
-  card_id: 5HQS2xXAPF4hOFudut_Tg
-  created_at: '2023-11-13T20:15:30.366828Z'
-  row: 0
-  col: 0
-  size_x: 24
-  size_y: 8
-  dashboard_tab_id: [DHMhMa1FYxiyIgM7_xdgR, O0vWXzcQX97NAp_KlupRD]
-  inline_parameters: []
-  parameter_mappings:
-  - card_id: 5HQS2xXAPF4hOFudut_Tg
-    parameter_id: 4a221c3a
-    target:
-    - dimension
-    - - field
-      - [Internal Metabase Database, public, v_users, full_name]
-      - {join-alias: People - Creator}
-    - {stage-number: 0}
-  - card_id: 5HQS2xXAPF4hOFudut_Tg
-    parameter_id: 50670f9e
-    target:
-    - dimension
-    - - field
-      - [Internal Metabase Database, public, v_users, is_active]
-      - {join-alias: People - Creator}
-    - {stage-number: 0}
-  - card_id: 5HQS2xXAPF4hOFudut_Tg
-    parameter_id: 6b3da96f
-    target:
-    - dimension
-    - - field
-      - [Internal Metabase Database, public, v_view_log, user_id]
-      - {base-type: type/Integer}
-    - {stage-number: 0}
-  - card_id: 5HQS2xXAPF4hOFudut_Tg
-    parameter_id: ba4cf986
-    target:
-    - dimension
-    - - field
-      - [Internal Metabase Database, public, v_view_log, timestamp]
-      - {base-type: type/DateTimeWithLocalTZ, temporal-unit: default}
-    - {stage-number: 0}
-  - card_id: 5HQS2xXAPF4hOFudut_Tg
-    parameter_id: d53443e8
-    target:
-    - dimension
-    - - field
-      - [Internal Metabase Database, public, v_users, email]
-      - {join-alias: People - Creator}
-    - {stage-number: 0}
-  series: []
-  visualization_settings:
-    column_settings:
-      '["name","entity_id"]':
-        click_behavior: {linkTemplate: '/dashboard/{{entity_id}}', linkType: url, type: link}
-  serdes/meta:
-  - {id: DHMhMa1FYxiyIgM7_xdgR, model: Dashboard}
-  - {id: O0vWXzcQX97NAp_KlupRD, model: DashboardTab}
-  - {id: hsKfpF3yEcMhoD-o_Zdn0, model: DashboardCard}
 - entity_id: W-Dah8wiwi3_DRg_VDSP6
   card_id: 95Om4AllyfyB5wtl6TeGi
   created_at: '2023-11-13T20:15:30.366828Z'
@@ -473,6 +414,65 @@ dashcards:
   - {id: DHMhMa1FYxiyIgM7_xdgR, model: Dashboard}
   - {id: O0vWXzcQX97NAp_KlupRD, model: DashboardTab}
   - {id: o3Trjmdzp8iKpQDhuYUtG, model: DashboardCard}
+- entity_id: hsKfpF3yEcMhoD-o_Zdn0
+  card_id: 5HQS2xXAPF4hOFudut_Tg
+  created_at: '2023-11-13T20:15:30.366828Z'
+  row: 0
+  col: 0
+  size_x: 24
+  size_y: 8
+  dashboard_tab_id: [DHMhMa1FYxiyIgM7_xdgR, O0vWXzcQX97NAp_KlupRD]
+  inline_parameters: []
+  parameter_mappings:
+  - card_id: 5HQS2xXAPF4hOFudut_Tg
+    parameter_id: 4a221c3a
+    target:
+    - dimension
+    - - field
+      - [Internal Metabase Database, public, v_users, full_name]
+      - {join-alias: People - Creator}
+    - {stage-number: 0}
+  - card_id: 5HQS2xXAPF4hOFudut_Tg
+    parameter_id: 50670f9e
+    target:
+    - dimension
+    - - field
+      - [Internal Metabase Database, public, v_users, is_active]
+      - {join-alias: People - Creator}
+    - {stage-number: 0}
+  - card_id: 5HQS2xXAPF4hOFudut_Tg
+    parameter_id: 6b3da96f
+    target:
+    - dimension
+    - - field
+      - [Internal Metabase Database, public, v_view_log, user_id]
+      - {base-type: type/Integer}
+    - {stage-number: 0}
+  - card_id: 5HQS2xXAPF4hOFudut_Tg
+    parameter_id: ba4cf986
+    target:
+    - dimension
+    - - field
+      - [Internal Metabase Database, public, v_view_log, timestamp]
+      - {base-type: type/DateTimeWithLocalTZ, temporal-unit: default}
+    - {stage-number: 0}
+  - card_id: 5HQS2xXAPF4hOFudut_Tg
+    parameter_id: d53443e8
+    target:
+    - dimension
+    - - field
+      - [Internal Metabase Database, public, v_users, email]
+      - {join-alias: People - Creator}
+    - {stage-number: 0}
+  series: []
+  visualization_settings:
+    column_settings:
+      '["name","entity_id"]':
+        click_behavior: {linkTemplate: '/dashboard/{{entity_id}}', linkType: url, type: link}
+  serdes/meta:
+  - {id: DHMhMa1FYxiyIgM7_xdgR, model: Dashboard}
+  - {id: O0vWXzcQX97NAp_KlupRD, model: DashboardTab}
+  - {id: hsKfpF3yEcMhoD-o_Zdn0, model: DashboardCard}
 - entity_id: 2qDp6z4ZWNaWAtXbk-0i8
   card_id: 5EsTAgs6Uu_xz69TsrUJ4
   created_at: '2023-11-13T20:23:23.603367Z'

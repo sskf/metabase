@@ -51,8 +51,8 @@ result_metadata:
   effective_type: type/DateTimeWithLocalTZ
   field_ref:
   - field
-  - [Internal Metabase Database, public, v_query_log, started_at]
-  - {temporal-unit: week}
+  - started_at
+  - {base-type: type/DateTimeWithLocalTZ, temporal-unit: week}
   id: [Internal Metabase Database, public, v_query_log, started_at]
   inherited_temporal_unit: week
   name: started_at
@@ -63,7 +63,7 @@ result_metadata:
   unit: week
   visibility_type: normal
   lib/breakout?: true
-  lib/card-id: 116
+  lib/card-id: 566
   lib/deduplicated-name: started_at
   lib/desired-column-alias: started_at
   lib/from-model?: true
@@ -72,7 +72,6 @@ result_metadata:
   lib/source: source/previous-stage
   lib/source-column-alias: started_at
   lib/temporal-unit: week
-  qp/implicit-field?: true
 - active: true
   base_type: type/Boolean
   database_type: bool
@@ -80,8 +79,8 @@ result_metadata:
   effective_type: type/Boolean
   field_ref:
   - field
-  - [Internal Metabase Database, public, v_query_log, cache_hit]
-  - null
+  - cache_hit
+  - {base-type: type/Boolean}
   id: [Internal Metabase Database, public, v_query_log, cache_hit]
   name: cache_hit
   position: 15
@@ -90,7 +89,7 @@ result_metadata:
   table_id: [Internal Metabase Database, public, v_query_log]
   visibility_type: normal
   lib/breakout?: true
-  lib/card-id: 116
+  lib/card-id: 566
   lib/deduplicated-name: cache_hit
   lib/desired-column-alias: cache_hit
   lib/from-model?: true
@@ -98,7 +97,6 @@ result_metadata:
   lib/original-name: cache_hit
   lib/source: source/previous-stage
   lib/source-column-alias: cache_hit
-  qp/implicit-field?: true
 - base_type: type/Float
   display_name: Percentile 90 of query running time
   effective_type: type/Float
