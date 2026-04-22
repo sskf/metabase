@@ -6,7 +6,7 @@ import {
   applyHostStyleVariables,
   useApp,
 } from "@modelcontextprotocol/ext-apps/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 interface McpAppState {
   query: string | null;
@@ -30,30 +30,7 @@ function applyHostContext(ctx: McpUiHostContext) {
   }
 }
 
-function useDevMcpApp(): McpAppState | null {
-  return useMemo(() => {
-    if (process.env.NODE_ENV !== "development") {
-      return null;
-    }
-
-    const params = new URLSearchParams(window.location.search);
-    const query = params.get("query");
-
-    if (!query) {
-      return null;
-    }
-
-    return {
-      query,
-      hostContext: { theme: "light" },
-      app: null,
-    };
-  }, []);
-}
-
 export function useMcpApp(): McpAppState {
-  const devState = useDevMcpApp();
-
   const [query, setQuery] = useState<string | null>(null);
   const [hostContext, setHostContext] = useState<McpUiHostContext | null>(null);
 
@@ -100,5 +77,5 @@ export function useMcpApp(): McpAppState {
     }
   }, [app]);
 
-  return devState ?? { query, hostContext, app };
+  return { query, hostContext, app };
 }
