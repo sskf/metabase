@@ -93,7 +93,7 @@ result_metadata:
   unit: day
   visibility_type: normal
   lib/breakout?: true
-  lib/card-id: 570
+  lib/card-id: 750
   lib/deduplicated-name: timestamp
   lib/desired-column-alias: timestamp
   lib/from-model?: true

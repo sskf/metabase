@@ -91,7 +91,7 @@ result_metadata:
   unit: week
   visibility_type: normal
   lib/breakout?: true
-  lib/card-id: 570
+  lib/card-id: 750
   lib/deduplicated-name: timestamp
   lib/desired-column-alias: timestamp
   lib/from-model?: true
@@ -117,7 +117,7 @@ result_metadata:
   table_id: [Internal Metabase Database, public, v_view_log]
   visibility_type: normal
   lib/breakout?: true
-  lib/card-id: 570
+  lib/card-id: 750
   lib/deduplicated-name: embedding_client
   lib/desired-column-alias: embedding_client
   lib/from-model?: true

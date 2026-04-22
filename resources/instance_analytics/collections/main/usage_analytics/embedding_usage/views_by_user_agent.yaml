@@ -63,7 +63,7 @@ result_metadata:
   table_id: [Internal Metabase Database, public, v_view_log]
   visibility_type: normal
   lib/breakout?: true
-  lib/card-id: 570
+  lib/card-id: 750
   lib/deduplicated-name: sanitized_user_agent
   lib/desired-column-alias: sanitized_user_agent
   lib/from-model?: true

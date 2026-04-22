@@ -103,7 +103,7 @@ result_metadata:
   table_id: [Internal Metabase Database, public, v_content]
   visibility_type: normal
   lib/breakout?: true
-  lib/card-id: 568
+  lib/card-id: 748
   lib/deduplicated-name: name
   lib/desired-column-alias: Content - Dashboard Qualified__name
   lib/from-model?: true
@@ -133,7 +133,7 @@ result_metadata:
   unit: week
   visibility_type: normal
   lib/breakout?: true
-  lib/card-id: 566
+  lib/card-id: 746
   lib/deduplicated-name: started_at
   lib/desired-column-alias: started_at
   lib/from-model?: true
@@ -158,7 +158,7 @@ result_metadata:
   table_id: [Internal Metabase Database, public, v_query_log]
   visibility_type: normal
   lib/breakout?: true
-  lib/card-id: 566
+  lib/card-id: 746
   lib/deduplicated-name: dashboard_id
   lib/desired-column-alias: dashboard_id
   lib/from-model?: true

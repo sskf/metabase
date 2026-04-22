@@ -81,7 +81,7 @@ result_metadata:
   table_id: [Internal Metabase Database, public, v_tenants]
   visibility_type: normal
   lib/breakout?: true
-  lib/card-id: 631
+  lib/card-id: 811
   lib/deduplicated-name: name
   lib/desired-column-alias: Tenants__name
   lib/from-model?: true
@@ -109,7 +109,7 @@ result_metadata:
   table_id: [Internal Metabase Database, public, v_tenants]
   visibility_type: normal
   lib/breakout?: true
-  lib/card-id: 631
+  lib/card-id: 811
   lib/deduplicated-name: tenant_id
   lib/desired-column-alias: Tenants__tenant_id
   lib/from-model?: true
