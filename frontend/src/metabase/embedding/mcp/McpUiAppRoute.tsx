@@ -11,7 +11,8 @@ import type { ResolvedColorScheme } from "metabase/utils/color-scheme";
 import { b64_to_utf8, utf8_to_b64 } from "metabase/utils/encoding";
 import type { Card } from "metabase-types/api";
 
-import { McpQueryBar, McpQuestionTitle } from "./McpQueryBar";
+import { McpQueryBar } from "./McpQueryBar";
+import { McpQuestionTitle } from "./McpQuestionTitle";
 import { useMcpApp } from "./hooks/useMcpApp";
 import { buildMcpAppsTheme } from "./utils/buildMcpAppsTheme";
 

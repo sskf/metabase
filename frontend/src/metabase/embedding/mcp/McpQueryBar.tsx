@@ -3,7 +3,6 @@ import { t } from "ttag";
 
 import { useSdkQuestionContext } from "embedding-sdk-bundle/components/private/SdkQuestion/context";
 import { getSensibleVisualizations } from "metabase/query_builder/components/chart-type-selector";
-import { getAdHocQuestionDescription } from "metabase/query_builder/components/view/ViewHeader/components/AdHocQuestionDescription/AdHocQuestionDescription";
 import { DatePicker } from "metabase/querying/common/components/DatePicker";
 import type { DatePickerValue } from "metabase/querying/common/types";
 import { getDateFilterDisplayName } from "metabase/querying/common/utils/dates";
@@ -21,7 +20,6 @@ import {
   Flex,
   Icon,
   Popover,
-  Text,
 } from "metabase/ui";
 import * as Lib from "metabase-lib";
 import type { TemporalUnit } from "metabase-types/api";
@@ -310,33 +308,5 @@ export function McpQueryBar() {
         </>
       )}
     </Flex>
-  );
-}
-
-/**
- * Renders a minimal question title without temporal bucket suffixes.
- * e.g. "Sum of Total by Created At" instead of "Sum of Total by Created At: Month".
- * Returns null when the query has no aggregations or breakouts.
- */
-export function McpQuestionTitle() {
-  const { question } = useSdkQuestionContext();
-
-  if (!question) {
-    return null;
-  }
-
-  const title =
-    getAdHocQuestionDescription({ question, stripTemporalBucket: true }) ||
-    question.displayName() ||
-    "";
-
-  if (!title) {
-    return null;
-  }
-
-  return (
-    <Text fw={700} fz="sm" px="md" pt="sm" truncate>
-      {title}
-    </Text>
   );
 }
