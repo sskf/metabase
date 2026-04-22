@@ -11,6 +11,7 @@ type AdHocQuestionDescriptionProps = {
 
 type GetAdhocQuestionDescriptionProps = {
   question: Question;
+  stripTemporalBucket?: boolean;
 };
 
 export const shouldRenderAdhocDescription = ({
@@ -26,6 +27,7 @@ export const shouldRenderAdhocDescription = ({
 
 export const getAdHocQuestionDescription = ({
   question,
+  stripTemporalBucket = false,
 }: GetAdhocQuestionDescriptionProps) => {
   const query = question.query();
   const stageIndex = getInfoStageIndex(query);
@@ -56,10 +58,20 @@ export const getAdHocQuestionDescription = ({
             breakouts.length,
           )
         : breakouts
-            .map(
-              (breakout) =>
-                Lib.displayInfo(query, stageIndex, breakout).longDisplayName,
-            )
+            .map((breakout) => {
+              if (stripTemporalBucket) {
+                const col = Lib.breakoutColumn(query, stageIndex, breakout);
+                const unbucketed = col
+                  ? Lib.withTemporalBucket(col, null)
+                  : null;
+                if (unbucketed) {
+                  return Lib.displayInfo(query, stageIndex, unbucketed)
+                    .displayName;
+                }
+              }
+              return Lib.displayInfo(query, stageIndex, breakout)
+                .longDisplayName;
+            })
             .join(t` and `);
 
   if (!aggregationDescription && !breakoutDescription) {

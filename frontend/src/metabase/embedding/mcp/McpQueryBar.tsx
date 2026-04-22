@@ -3,6 +3,7 @@ import { t } from "ttag";
 
 import { useSdkQuestionContext } from "embedding-sdk-bundle/components/private/SdkQuestion/context";
 import { getSensibleVisualizations } from "metabase/query_builder/components/chart-type-selector";
+import { getAdHocQuestionDescription } from "metabase/query_builder/components/view/ViewHeader/components/AdHocQuestionDescription/AdHocQuestionDescription";
 import { DatePicker } from "metabase/querying/common/components/DatePicker";
 import type { DatePickerValue } from "metabase/querying/common/types";
 import { getDateFilterDisplayName } from "metabase/querying/common/utils/dates";
@@ -324,49 +325,10 @@ export function McpQuestionTitle() {
     return null;
   }
 
-  const query = question.query();
-  const stageIndex = -1;
-
-  const aggregations = Lib.aggregations(query, stageIndex);
-  const breakouts = Lib.breakouts(query, stageIndex);
-
-  const aggregationNames = aggregations
-    .map((a) => Lib.displayInfo(query, stageIndex, a).displayName)
-    .join(", ");
-
-  const breakoutNames = breakouts
-    .flatMap((b) => {
-      const column = Lib.breakoutColumn(query, stageIndex, b);
-
-      if (!column) {
-        return [];
-      }
-
-      // Strip temporal bucket so we get "Created At" not "Created At: Month"
-      const unbucketed = Lib.withTemporalBucket(column, null);
-      const { displayName } = Lib.displayInfo(query, stageIndex, unbucketed);
-
-      return [displayName];
-    })
-    .join(", ");
-
-  // For raw table queries (no aggregations/breakouts), fall back to the question display name
-  // (e.g. "Orders") so the title is always shown.
   const title =
-    [aggregationNames, breakoutNames].filter(Boolean).join(" by ") ||
+    getAdHocQuestionDescription({ question, stripTemporalBucket: true }) ||
     question.displayName() ||
     "";
-
-  // eslint-disable-next-line no-console
-  console.log("[MCP] McpQuestionTitle", {
-    aggregations: aggregations.length,
-    breakouts: breakouts.length,
-    aggregationNames,
-    breakoutNames,
-    displayName: question.displayName(),
-    display: question.display(),
-    title,
-  });
 
   if (!title) {
     return null;
