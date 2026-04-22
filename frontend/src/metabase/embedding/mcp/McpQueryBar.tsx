@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { t } from "ttag";
 
 import { useSdkQuestionContext } from "embedding-sdk-bundle/components/private/SdkQuestion/context";
+import { QueryExplorerBar } from "metabase/metrics-viewer/components/QueryExplorerBar";
 import { getSensibleVisualizations } from "metabase/query_builder/components/chart-type-selector";
 import { DatePicker } from "metabase/querying/common/components/DatePicker";
 import type { DatePickerValue } from "metabase/querying/common/types";
@@ -12,11 +13,9 @@ import {
   getDatePickerValue,
 } from "metabase/querying/filters/utils/dates";
 import {
-  ActionIcon,
   Box,
   Button,
   DefaultSelectItem,
-  Divider,
   Flex,
   Icon,
   Popover,
@@ -64,12 +63,15 @@ export function McpQueryBar() {
   // --- Chart type ---
 
   const rawDisplay = question.display();
+
   const selectedChartType: McpChartType | null = isMcpChartType(rawDisplay)
     ? rawDisplay
     : null;
 
-  const handleDisplayChange = (type: McpChartType) => {
-    updateQuestion(question.setDisplay(type).lockDisplay(), { run: false });
+  const handleDisplayChange = (type: string) => {
+    updateQuestion(question.setDisplay(type as McpChartType).lockDisplay(), {
+      run: false,
+    });
   };
 
   // --- Temporal breakout ---
@@ -78,10 +80,11 @@ export function McpQueryBar() {
   let temporalColumn: Lib.ColumnMetadata | null = null;
 
   for (const clause of breakoutClauses) {
-    const col = Lib.breakoutColumn(query, stageIndex, clause);
-    if (col && Lib.isTemporalBucketable(query, stageIndex, col)) {
+    const column = Lib.breakoutColumn(query, stageIndex, clause);
+
+    if (column && Lib.isTemporalBucketable(query, stageIndex, column)) {
       temporalClause = clause;
-      temporalColumn = col;
+      temporalColumn = column;
       break;
     }
   }
@@ -95,6 +98,7 @@ export function McpQueryBar() {
   const currentBucket = temporalColumn
     ? Lib.temporalBucket(temporalColumn)
     : null;
+
   const currentUnit = currentBucket
     ? (Lib.displayInfo(query, stageIndex, currentBucket)
         .shortName as TemporalUnit)
@@ -107,6 +111,7 @@ export function McpQueryBar() {
   const availableItems = availableBuckets.map((bucket) => {
     const info = Lib.displayInfo(query, stageIndex, bucket);
     const unit = info.shortName as TemporalUnit;
+
     return { bucket, unit, label: Lib.describeTemporalUnit(unit) };
   });
 
@@ -114,6 +119,7 @@ export function McpQueryBar() {
     if (!temporalClause || !temporalColumn) {
       return;
     }
+
     const newColumn = Lib.withTemporalBucket(temporalColumn, bucket);
     const newQuery = Lib.replaceClause(
       query,
@@ -121,6 +127,7 @@ export function McpQueryBar() {
       temporalClause,
       newColumn,
     );
+
     updateQuestion(question.setQuery(newQuery), { run: true });
     setIsBucketOpen(false);
   };
@@ -156,10 +163,13 @@ export function McpQueryBar() {
     if (!rawTemporalColumn) {
       return;
     }
+
     const newFilterClause = getDateFilterClause(rawTemporalColumn, value);
+
     const newQuery = dateFilterClause
       ? Lib.replaceClause(query, stageIndex, dateFilterClause, newFilterClause)
       : Lib.filter(query, stageIndex, newFilterClause);
+
     updateQuestion(question.setQuery(newQuery), { run: true });
     setIsDateFilterOpen(false);
   };
@@ -173,140 +183,104 @@ export function McpQueryBar() {
     setIsDateFilterOpen(false);
   };
 
-  return (
-    <Flex
-      maw="100%"
-      h="3rem"
-      display="inline-flex"
-      bg="background-primary"
-      bd="1px solid var(--mb-color-border)"
-      bdrs="lg"
-      px="sm"
-      align="center"
-      gap="xs"
-    >
-      {/* Chart type buttons */}
-      <Flex gap="xs" bg="background-secondary" p="xs" bdrs="md">
-        {sensibleChartTypes.map(({ type, icon }) => (
-          <ActionIcon
-            key={type}
-            w="2rem"
-            variant={selectedChartType === type ? "filled" : "subtle"}
-            bg={selectedChartType === type ? "background-primary" : undefined}
-            onClick={() => handleDisplayChange(type)}
-            aria-label={type}
+  const filterControl = rawTemporalColumn ? (
+    <Popover opened={isDateFilterOpen} onChange={setIsDateFilterOpen}>
+      <Popover.Target>
+        <Button
+          w={160}
+          justify="space-between"
+          fw="bold"
+          py="xs"
+          px="sm"
+          variant="subtle"
+          color="text-primary"
+          rightSection={<Icon name="chevrondown" size={12} />}
+          onClick={() => setIsDateFilterOpen(!isDateFilterOpen)}
+        >
+          {dateFilterLabel}
+        </Button>
+      </Popover.Target>
+
+      <Popover.Dropdown>
+        <DatePicker
+          value={dateFilterValue}
+          availableUnits={datePickerUnits}
+          onChange={handleDateFilterChange}
+          renderSubmitButton={({ value }) => (
+            <Flex justify="space-between" w="100%">
+              {dateFilterClause ? (
+                <Button
+                  variant="subtle"
+                  c="text-secondary"
+                  onClick={handleDateFilterClear}
+                >
+                  {t`All time`}
+                </Button>
+              ) : (
+                <div />
+              )}
+
+              <Button
+                type="submit"
+                variant="filled"
+                disabled={!value}
+              >{t`Apply`}</Button>
+            </Flex>
+          )}
+        />
+      </Popover.Dropdown>
+    </Popover>
+  ) : undefined;
+
+  const granularityControl =
+    temporalColumn && availableItems.length > 0 ? (
+      <Popover opened={isBucketOpen} onChange={setIsBucketOpen}>
+        <Popover.Target>
+          <Button
+            w={120}
+            justify="space-between"
+            fw="bold"
+            py="xs"
+            px="sm"
+            variant="subtle"
+            color="text-primary"
+            rightSection={<Icon name="chevrondown" size={12} />}
+            onClick={() => setIsBucketOpen(!isBucketOpen)}
           >
-            <Icon
-              name={icon}
-              c={selectedChartType === type ? "brand" : "text-primary"}
+            {bucketLabel}
+          </Button>
+        </Popover.Target>
+        <Popover.Dropdown>
+          <Box p="sm" miw={180}>
+            <DefaultSelectItem
+              value="none"
+              label={t`All time`}
+              selected={!currentUnit}
+              onClick={() => handleBucketChange(null)}
+              role="option"
             />
-          </ActionIcon>
-        ))}
-      </Flex>
-
-      {/* Date range filter — only shown when the query has a temporal breakout */}
-      {rawTemporalColumn && (
-        <>
-          <Divider
-            orientation="vertical"
-            mx="xs"
-            style={{ borderColor: "var(--mb-color-border)" }}
-          />
-          <Popover opened={isDateFilterOpen} onChange={setIsDateFilterOpen}>
-            <Popover.Target>
-              <Button
-                w={160}
-                justify="space-between"
-                fw="bold"
-                py="xs"
-                px="sm"
-                variant="subtle"
-                color="text-primary"
-                rightSection={<Icon name="chevrondown" size={12} />}
-                onClick={() => setIsDateFilterOpen(!isDateFilterOpen)}
-              >
-                {dateFilterLabel}
-              </Button>
-            </Popover.Target>
-            <Popover.Dropdown>
-              <DatePicker
-                value={dateFilterValue}
-                availableUnits={datePickerUnits}
-                onChange={handleDateFilterChange}
-                renderSubmitButton={({ value }) => (
-                  <Flex justify="space-between" w="100%">
-                    {dateFilterClause ? (
-                      <Button
-                        variant="subtle"
-                        c="text-secondary"
-                        onClick={handleDateFilterClear}
-                      >
-                        {t`All time`}
-                      </Button>
-                    ) : (
-                      <div />
-                    )}
-                    <Button
-                      type="submit"
-                      variant="filled"
-                      disabled={!value}
-                    >{t`Apply`}</Button>
-                  </Flex>
-                )}
+            {availableItems.map(({ bucket, unit, label }) => (
+              <DefaultSelectItem
+                key={unit}
+                value={unit}
+                label={label}
+                selected={currentUnit === unit}
+                onClick={() => handleBucketChange(bucket)}
+                role="option"
               />
-            </Popover.Dropdown>
-          </Popover>
-        </>
-      )}
+            ))}
+          </Box>
+        </Popover.Dropdown>
+      </Popover>
+    ) : undefined;
 
-      {/* Temporal bucket picker — only shown when the query has a temporal breakout */}
-      {temporalColumn && availableItems.length > 0 && (
-        <>
-          <Divider
-            orientation="vertical"
-            mx="xs"
-            style={{ borderColor: "var(--mb-color-border)" }}
-          />
-          <Popover opened={isBucketOpen} onChange={setIsBucketOpen}>
-            <Popover.Target>
-              <Button
-                w={120}
-                justify="space-between"
-                fw="bold"
-                py="xs"
-                px="sm"
-                variant="subtle"
-                color="text-primary"
-                rightSection={<Icon name="chevrondown" size={12} />}
-                onClick={() => setIsBucketOpen(!isBucketOpen)}
-              >
-                {bucketLabel}
-              </Button>
-            </Popover.Target>
-            <Popover.Dropdown>
-              <Box p="sm" miw={180}>
-                <DefaultSelectItem
-                  value="none"
-                  label={t`All time`}
-                  selected={!currentUnit}
-                  onClick={() => handleBucketChange(null)}
-                  role="option"
-                />
-                {availableItems.map(({ bucket, unit, label }) => (
-                  <DefaultSelectItem
-                    key={unit}
-                    value={unit}
-                    label={label}
-                    selected={currentUnit === unit}
-                    onClick={() => handleBucketChange(bucket)}
-                    role="option"
-                  />
-                ))}
-              </Box>
-            </Popover.Dropdown>
-          </Popover>
-        </>
-      )}
-    </Flex>
+  return (
+    <QueryExplorerBar
+      chartTypes={sensibleChartTypes}
+      currentChartType={selectedChartType ?? ""}
+      onChartTypeChange={handleDisplayChange}
+      filterControl={filterControl}
+      granularityControl={granularityControl}
+    />
   );
 }
