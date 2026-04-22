@@ -1,7 +1,7 @@
 import { useMemo } from "react";
-import { t } from "ttag";
 
 import { useSdkQuestionContext } from "embedding-sdk-bundle/components/private/SdkQuestion/context";
+import { describeQueryStage } from "metabase/query_builder/components/view/ViewHeader/components/AdHocQuestionDescription/AdHocQuestionDescription";
 import { Text } from "metabase/ui";
 import * as Lib from "metabase-lib";
 
@@ -44,29 +44,8 @@ export function McpQuestionTitle() {
       return question.displayName() || "";
     }
 
-    const aggregations = Lib.aggregations(query, stageIndex);
-    const breakouts = Lib.breakouts(query, stageIndex);
-
-    const aggregationNames = aggregations
-      .map((a) => Lib.displayInfo(query, stageIndex!, a).longDisplayName)
-      .join(t` and `);
-
-    const breakoutNames = breakouts
-      .map((b) => {
-        const col = Lib.breakoutColumn(query, stageIndex!, b);
-        // Strip temporal bucket: "Created At: Month" → "Created At"
-        const unbucketed =
-          col && Lib.isTemporalBucketable(query, stageIndex!, col)
-            ? Lib.withTemporalBucket(col, null)
-            : col;
-        return unbucketed
-          ? Lib.displayInfo(query, stageIndex!, unbucketed).displayName
-          : Lib.displayInfo(query, stageIndex!, b).longDisplayName;
-      })
-      .join(t` and `);
-
     return (
-      [aggregationNames, breakoutNames].filter(Boolean).join(t` by `) ||
+      describeQueryStage(query, stageIndex, { stripTemporalBucket: true }) ||
       question.displayName() ||
       ""
     );
