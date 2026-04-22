@@ -12,6 +12,9 @@ import {
   MiniPicker,
   type OmniPickerItem,
 } from "metabase/common/components/Pickers";
+import type { MiniPickerItem } from "metabase/common/components/Pickers/MiniPicker/types";
+import { PLUGIN_LIBRARY } from "metabase/plugins";
+import type { MenuProps } from "metabase/ui";
 
 import type { SelectedMetric } from "../../../types/viewer-state";
 
@@ -22,19 +25,34 @@ export interface MetricSearchDropdownRef {
 }
 
 type MetricSearchDropdownProps = {
+  anchorRect?: { left: number; top: number };
   onSelect: (metric: SelectedMetric) => void;
   onClose: () => void;
   externalSearchText?: string;
+  selectedMetric?: SelectedMetric;
+  menuProps?: MenuProps;
 };
 
 export const MetricSearchDropdown = forwardRef<
   MetricSearchDropdownRef,
   MetricSearchDropdownProps
 >(function MetricSearchDropdown(
-  { onSelect, onClose, externalSearchText },
+  {
+    anchorRect,
+    onSelect,
+    onClose,
+    externalSearchText,
+    selectedMetric,
+    menuProps,
+  },
   ref,
 ) {
   const [isBrowsing, setIsBrowsing] = useState(false);
+
+  const libraryMetricsCollection =
+    PLUGIN_LIBRARY.useGetLibraryChildCollectionByType({
+      type: "library-metrics",
+    });
 
   const miniPickerRef = useRef<HTMLDivElement>(null);
 
@@ -76,6 +94,19 @@ export const MetricSearchDropdown = forwardRef<
     [onSelect],
   );
 
+  const shouldHide = useCallback(
+    (item: MiniPickerItem) => {
+      if (selectedMetric) {
+        return (
+          item.id === selectedMetric.id &&
+          item.model === selectedMetric.sourceType
+        );
+      }
+      return false;
+    },
+    [selectedMetric],
+  );
+
   return (
     <>
       <MiniPicker
@@ -86,11 +117,38 @@ export const MetricSearchDropdown = forwardRef<
         models={["metric", "measure"]}
         onBrowseAll={() => setIsBrowsing(true)}
         forceSearch={true}
+        searchParams={{
+          limit: 5,
+        }}
+        shouldHide={(item) => shouldHide(item as MiniPickerItem)}
+        menuProps={menuProps}
         menuDropdownRef={miniPickerRef}
-      />
+      >
+        {anchorRect && (
+          <span
+            aria-hidden
+            style={{
+              position: "fixed",
+              left: anchorRect.left,
+              top: anchorRect.top,
+              width: 0,
+              height: 0,
+              pointerEvents: "none",
+            }}
+          />
+        )}
+      </MiniPicker>
       {isBrowsing && (
         <EntityPickerModal
           title={t`Pick a metric or measure`}
+          value={
+            libraryMetricsCollection
+              ? {
+                  model: "collection",
+                  id: libraryMetricsCollection.id as number,
+                }
+              : undefined
+          }
           onChange={handleSelectResult}
           onClose={() => setIsBrowsing(false)}
           models={["metric", "measure", "table"]}

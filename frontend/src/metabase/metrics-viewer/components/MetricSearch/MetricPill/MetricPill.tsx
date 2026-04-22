@@ -42,26 +42,6 @@ export function MetricPill({
 }: MetricPillProps) {
   const [popoverState, setPopoverState] = useState<PillPopoverState>("closed");
 
-  const { selectedMetricIds, selectedMeasureIds } = useMemo(() => {
-    if (metric.sourceType === "metric") {
-      return {
-        selectedMetricIds: new Set<number>([metric.id]),
-        selectedMeasureIds: new Set<number>(),
-      };
-    }
-    if (metric.sourceType === "measure") {
-      return {
-        selectedMetricIds: new Set<number>(),
-        selectedMeasureIds: new Set<number>([metric.id]),
-      };
-    }
-
-    return {
-      selectedMetricIds: new Set<number>(),
-      selectedMeasureIds: new Set<number>(),
-    };
-  }, [metric.id, metric.sourceType]);
-
   const dimensions = useMemo(
     () =>
       definitionEntry.definition
@@ -175,15 +155,12 @@ export function MetricPill({
         </Popover.Target>
         <Popover.Dropdown p={0} mt="-0.15rem">
           <MetricSearchDropdown
-            selectedMetricIds={selectedMetricIds}
-            selectedMeasureIds={selectedMeasureIds}
             onSelect={handleSelect}
             onClose={handleClose}
-            excludeMetric={{
-              id: metric.id,
-              sourceType: metric.sourceType,
+            selectedMetric={metric}
+            menuProps={{
+              offset: 0,
             }}
-            showSearchInput
           />
         </Popover.Dropdown>
       </Popover>

@@ -5,6 +5,8 @@ import {
   useContext,
 } from "react";
 
+import type { SearchRequest } from "metabase-types/api";
+
 import type {
   MiniPickerCollectionItem,
   MiniPickerFolderItem,
@@ -26,6 +28,7 @@ export interface MiniPickerContextValue {
   libraryCollection?: MiniPickerCollectionItem;
   shouldShowLibrary?: boolean;
   forceSearch?: boolean;
+  searchParams?: Partial<SearchRequest>;
 }
 
 export const MiniPickerContext = createContext<

@@ -321,22 +321,24 @@ function CollectionItemList({ parent }: { parent: MiniPickerCollectionItem }) {
 }
 
 function SearchItemList({ query }: { query: string }) {
-  const { onChange, models, isHidden } = useMiniPickerContext();
+  const { onChange, models, isHidden, searchParams } = useMiniPickerContext();
   const debouncedQuery = useDebouncedValue(query, 500);
 
   const makeQueryArgs = (
     query: string,
     models: MiniPickerPickableItem["model"][],
+    searchParams?: Partial<SearchRequest>,
   ): SearchRequest => ({
     q: query,
     models: models as SearchModel[],
     limit: 50,
     // FIXME: optionally pass table_db_id so we filter on the backend to valid joins
+    ...(searchParams || {}),
   });
 
   const rawQueryArgs = useMemo(
-    () => makeQueryArgs(query, models),
-    [query, models],
+    () => makeQueryArgs(query, models, searchParams),
+    [query, models, searchParams],
   );
 
   const cachedSearch = useSelector(
@@ -346,8 +348,8 @@ function SearchItemList({ query }: { query: string }) {
 
   const effectiveQuery = hasCachedResults ? query : debouncedQuery;
   const searchQueryArgs = useMemo(
-    () => makeQueryArgs(effectiveQuery, models),
-    [effectiveQuery, models],
+    () => makeQueryArgs(effectiveQuery, models, searchParams),
+    [effectiveQuery, models, searchParams],
   );
 
   const { data: searchResponse, isFetching } = useSearchQuery(searchQueryArgs);

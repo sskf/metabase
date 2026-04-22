@@ -230,6 +230,7 @@ export function MetricSearchInput({
             </div>
             {isOpen && (
               <MetricSearchDropdown
+                anchorRect={anchorRect}
                 onSelect={handleSelect}
                 externalSearchText={currentWord}
                 onClose={() => setIsOpen(false)}
