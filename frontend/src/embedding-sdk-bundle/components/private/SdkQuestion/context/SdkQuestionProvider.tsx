@@ -36,8 +36,7 @@ import { EmbeddingDataPickerContextProvider } from "metabase/querying/notebook/c
 import { getEmbeddingMode } from "metabase/visualizations/click-actions/lib/modes";
 import { EmbeddingSdkMode } from "metabase/visualizations/click-actions/modes/EmbeddingSdkMode";
 import type { ClickActionModeGetter } from "metabase/visualizations/types";
-import * as Lib from "metabase-lib";
-import Question from "metabase-lib/v1/Question";
+import type Question from "metabase-lib/v1/Question";
 
 import type { SdkQuestionContextType, SdkQuestionProviderProps } from "./types";
 
@@ -52,69 +51,6 @@ export const SdkQuestionContext = createContext<
 >(undefined);
 
 const DEFAULT_OPTIONS = {};
-
-const STAGE_INDEX = -1;
-
-/** Generates a human-readable English description of a card's query using Lib display info. */
-function buildQueryDescription(
-  nextCard: ConstructorParameters<typeof Question>[0],
-  currentQuestion: Question,
-): string {
-  try {
-    const nextQuestion = new Question(nextCard, currentQuestion.metadata());
-    const query = nextQuestion.query();
-
-    const parts: string[] = [];
-
-    // Source table
-    const sourceTableId = Lib.sourceTableOrCardId(query);
-    if (sourceTableId != null) {
-      const metadataProvider = Lib.metadataProvider(
-        (nextCard.dataset_query as { database?: number }).database ?? -1,
-        currentQuestion.metadata(),
-      );
-      const tableMetadata = Lib.tableOrCardMetadata(
-        metadataProvider,
-        sourceTableId,
-      );
-      if (tableMetadata) {
-        const info = Lib.displayInfo(query, STAGE_INDEX, tableMetadata);
-        parts.push(info.displayName);
-      }
-    }
-
-    // Aggregations
-    const aggregations = Lib.aggregations(query, STAGE_INDEX);
-    if (aggregations.length > 0) {
-      const names = aggregations
-        .map((a) => Lib.displayInfo(query, STAGE_INDEX, a).displayName)
-        .join(", ");
-      parts.push(`aggregated by ${names}`);
-    }
-
-    // Breakouts
-    const breakouts = Lib.breakouts(query, STAGE_INDEX);
-    if (breakouts.length > 0) {
-      const names = breakouts
-        .map((b) => Lib.displayInfo(query, STAGE_INDEX, b).displayName)
-        .join(", ");
-      parts.push(`grouped by ${names}`);
-    }
-
-    // Filters
-    const filters = Lib.filters(query, STAGE_INDEX);
-    if (filters.length > 0) {
-      const names = filters
-        .map((f) => Lib.displayInfo(query, STAGE_INDEX, f).displayName)
-        .join(", ");
-      parts.push(`where ${names}`);
-    }
-
-    return parts.join(", ") || "query";
-  } catch {
-    return "query";
-  }
-}
 
 export const SdkQuestionProvider = ({
   questionId: rawQuestionId,
@@ -268,14 +204,10 @@ export const SdkQuestionProvider = ({
   const navigateToNewCardWithDrillThrough = useCallback(
     async (params: Parameters<NonNullable<typeof navigateToNewCard>>[0]) => {
       if (onDrillThrough) {
-        const description = question
-          ? buildQueryDescription(params.nextCard, question)
-          : "";
         await onDrillThrough(
           {
             drillName: params.drillName,
             nextCard: params.nextCard,
-            description,
           },
           () => navigateToNewCard?.(params) ?? Promise.resolve(),
         );
@@ -283,7 +215,7 @@ export const SdkQuestionProvider = ({
         await navigateToNewCard?.(params);
       }
     },
-    [navigateToNewCard, onDrillThrough, question],
+    [navigateToNewCard, onDrillThrough],
   );
 
   // Wrap navigateToNewCard to push the virtual entry for the internal navigation system

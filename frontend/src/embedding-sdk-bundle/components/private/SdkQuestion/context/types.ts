@@ -151,8 +151,6 @@ export type SdkQuestionProviderProps = PropsWithChildren<
         params: {
           drillName: string | undefined;
           nextCard: Card;
-          /** Human-readable description of the nextCard query (e.g. "Orders where Status = Paid, grouped by Created At: Month"). */
-          description: string;
         },
         defaultNavigate: () => Promise<void>,
       ) => Promise<void>;
