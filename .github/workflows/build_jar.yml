@@ -1,4 +1,4 @@
-name: Release 1 - Build Release Artifact
+name: Release 1 - Build jar
 run-name: Build ${{ inputs.version }}
 
 on:
