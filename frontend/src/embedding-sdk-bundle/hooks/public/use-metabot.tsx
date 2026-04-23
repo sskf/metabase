@@ -8,6 +8,7 @@ import type { SdkStore } from "embedding-sdk-bundle/store/types";
 import type { MetabaseAuthConfig } from "embedding-sdk-bundle/types";
 import type {
   MetabotChartProps,
+  MetabotErrorMessage,
   MetabotMessage,
   UseMetabotResult,
 } from "embedding-sdk-bundle/types/metabot";
@@ -98,7 +99,10 @@ export const useMetabot = (): UseMetabotResult => {
     resetConversation: agent.resetConversation,
 
     messages,
-    errorMessages: agent.errorMessages,
+    errorMessages: agent.errorMessages.filter(
+      (errorMessage): errorMessage is MetabotErrorMessage =>
+        errorMessage.type === "alert" || errorMessage.type === "message",
+    ),
     isProcessing: agent.isDoingScience,
 
     CurrentChart,
@@ -185,7 +189,7 @@ const mapMessage = (
         ({ id, role: "agent", type: "text", message }) as const,
     )
     .with({ role: "agent", type: "chart" }, ({ id, navigateTo }) => {
-      const Component = context
+      const Chart = context
         ? getCachedChartComponent(navigateTo, cache, context)
         : FallbackChartComponent;
       return {
@@ -193,7 +197,7 @@ const mapMessage = (
         role: "agent",
         type: "chart",
         questionPath: navigateTo,
-        Component,
+        Chart,
       } as const;
     })
     .exhaustive();

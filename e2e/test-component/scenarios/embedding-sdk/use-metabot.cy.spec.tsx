@@ -1,8 +1,8 @@
 const { H } = cy;
 
+import { useMetabot } from "@metabase/embedding-sdk-react";
 import { useEffect, useRef, useState } from "react";
 
-import { useMetabot } from "@metabase/embedding-sdk-react";
 
 import { SAMPLE_DATABASE } from "e2e/support/cypress_sample_database";
 import { getSdkRoot } from "e2e/support/helpers/e2e-embedding-sdk-helpers";
