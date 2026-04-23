@@ -30,54 +30,54 @@ on:
   workflow_call:
 
 jobs:
-  check-existing-artifacts:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      ee_exists: ${{ steps.check-ee.outcome == 'success' }}
-      oss_exists: ${{ steps.check-oss.outcome == 'success' }}
-      should_build: ${{ steps.decide.outputs.should_build }}
-    steps:
-      - name: Check out the code
-        uses: actions/checkout@v4
-      - name: Try to fetch existing EE artifact
-        id: check-ee
-        continue-on-error: true
-        uses: ./.github/actions/fetch-artifact
-        with:
-          commit: ${{ github.event.inputs.commit || github.event.pull_request.head.sha || github.sha }}
-          edition: ee
-          output-name: metabase-ee.jar
+  # check-existing-artifacts:
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 5
+  #   outputs:
+  #     ee_exists: ${{ steps.check-ee.outcome == 'success' }}
+  #     oss_exists: ${{ steps.check-oss.outcome == 'success' }}
+  #     should_build: ${{ steps.decide.outputs.should_build }}
+  #   steps:
+  #     - name: Check out the code
+  #       uses: actions/checkout@v4
+  #     - name: Try to fetch existing EE artifact
+  #       id: check-ee
+  #       continue-on-error: true
+  #       uses: ./.github/actions/fetch-artifact
+  #       with:
+  #         commit: ${{ github.event.inputs.commit || github.event.pull_request.head.sha || github.sha }}
+  #         edition: ee
+  #         output-name: metabase-ee.jar
 
-      - name: Try to fetch existing OSS artifact
-        id: check-oss
-        continue-on-error: true
-        uses: ./.github/actions/fetch-artifact
-        with:
-          commit: ${{ github.event.inputs.commit || github.event.pull_request.head.sha || github.sha }}
-          edition: oss
-          output-name: metabase-oss.jar
+  #     - name: Try to fetch existing OSS artifact
+  #       id: check-oss
+  #       continue-on-error: true
+  #       uses: ./.github/actions/fetch-artifact
+  #       with:
+  #         commit: ${{ github.event.inputs.commit || github.event.pull_request.head.sha || github.sha }}
+  #         edition: oss
+  #         output-name: metabase-oss.jar
 
-      - name: Decide if build is needed
-        id: decide
-        run: |
-          EE_EXISTS="${{ steps.check-ee.outcome == 'success' }}"
-          OSS_EXISTS="${{ steps.check-oss.outcome == 'success' }}"
+  #     - name: Decide if build is needed
+  #       id: decide
+  #       run: |
+  #         EE_EXISTS="${{ steps.check-ee.outcome == 'success' }}"
+  #         OSS_EXISTS="${{ steps.check-oss.outcome == 'success' }}"
 
-          echo "EE exists: $EE_EXISTS"
-          echo "OSS exists: $OSS_EXISTS"
+  #         echo "EE exists: $EE_EXISTS"
+  #         echo "OSS exists: $OSS_EXISTS"
 
-          # Build only if artifacts don't exist for this commit hash
-          # Since we build by hash, if artifacts exist for this hash, we don't need to rebuild
-          if [[ "$EE_EXISTS" == "false" ]] || [[ "$OSS_EXISTS" == "false" ]]; then
-            SHOULD_BUILD="true"
-            echo "Will build: ee_exists=$EE_EXISTS, oss_exists=$OSS_EXISTS"
-          else
-            SHOULD_BUILD="false"
-            echo "Skipping build: artifacts exist for this commit hash"
-          fi
+  #         # Build only if artifacts don't exist for this commit hash
+  #         # Since we build by hash, if artifacts exist for this hash, we don't need to rebuild
+  #         if [[ "$EE_EXISTS" == "false" ]] || [[ "$OSS_EXISTS" == "false" ]]; then
+  #           SHOULD_BUILD="true"
+  #           echo "Will build: ee_exists=$EE_EXISTS, oss_exists=$OSS_EXISTS"
+  #         else
+  #           SHOULD_BUILD="false"
+  #           echo "Skipping build: artifacts exist for this commit hash"
+  #         fi
 
-          echo "should_build=$SHOULD_BUILD" >> $GITHUB_OUTPUT
+  #         echo "should_build=$SHOULD_BUILD" >> $GITHUB_OUTPUT
 
   # if this is on a release branch, we need to check the build requirements
   get-build-requirements:
@@ -115,8 +115,8 @@ jobs:
 
   build:
     needs:
-      [check-existing-artifacts, get-build-requirements]
-    if: always() && !cancelled() && needs.check-existing-artifacts.outputs.should_build == 'true' && (needs.get-build-requirements.result == 'success' || needs.get-build-requirements.result == 'skipped')
+      [get-build-requirements]
+    if: always() && !cancelled() && (needs.get-build-requirements.result == 'success' || needs.get-build-requirements.result == 'skipped')
     name: Build MB ${{ matrix.edition }}
     runs-on: ${{ vars.DEFAULT_RUNNER_KEY }}
     timeout-minutes: 15
@@ -150,14 +150,14 @@ jobs:
   check-jar-health:
     runs-on: ${{ vars.DEFAULT_RUNNER_KEY }}
     name: Is ${{ matrix.edition }} (java ${{ matrix.java-version }}) healthy?
-    needs: [build, check-existing-artifacts]
+    needs: [build]
     # We only care about the explicit JAR health check on push to `master` and the `release-` branches.
     # JARs created in random branches on PRs are 99% of the time treated as ephemeral, and used only in e2e tests.
     # E2E tests already have a step where they wait for the instance health check.
     if: |
       always() && !cancelled() &&
       (github.ref_name == 'master' || startsWith(github.ref_name, 'release-')) &&
-      (needs.build.result == 'success' || (needs.check-existing-artifacts.outputs.should_build == 'false' && needs.check-existing-artifacts.outputs.ee_exists == 'true' && needs.check-existing-artifacts.outputs.oss_exists == 'true'))
+      (needs.build.result == 'success')
     timeout-minutes: 10
     strategy:
       matrix:
