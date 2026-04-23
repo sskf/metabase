@@ -31,7 +31,7 @@ on:
 
 jobs:
   check-existing-artifacts:
-    runs-on: ${{ vars.DEFAULT_RUNNER_KEY }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       ee_exists: ${{ steps.check-ee.outcome == 'success' }}
