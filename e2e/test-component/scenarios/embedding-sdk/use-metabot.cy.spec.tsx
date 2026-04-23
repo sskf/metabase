@@ -3,7 +3,6 @@ const { H } = cy;
 import { useMetabot } from "@metabase/embedding-sdk-react";
 import { useEffect, useRef, useState } from "react";
 
-
 import { SAMPLE_DATABASE } from "e2e/support/cypress_sample_database";
 import { getSdkRoot } from "e2e/support/helpers/e2e-embedding-sdk-helpers";
 import {
@@ -96,7 +95,11 @@ const IdentityTrackingConsumer = () => {
 
   useEffect(() => {
     const current = metabot?.CurrentChart ?? null;
-    if (current && previousChartRef.current && previousChartRef.current !== current) {
+    if (
+      current &&
+      previousChartRef.current &&
+      previousChartRef.current !== current
+    ) {
       setIdentityChanges((count) => count + 1);
     }
     previousChartRef.current = current;
@@ -220,8 +223,9 @@ describe("scenarios > embedding-sdk > use-metabot hook", () => {
     cy.window().then((win) => {
       // Channel global may be undefined, or defined-but-null. Either proves
       // no subscriber published a value.
-      const channel = (win as unknown as { __MB_METABOT_STATE__?: { value?: unknown } })
-        .__MB_METABOT_STATE__;
+      const channel = (
+        win as unknown as { __MB_METABOT_STATE__?: { value?: unknown } }
+      ).__MB_METABOT_STATE__;
       expect(!channel || channel.value == null).to.equal(true);
     });
   });
