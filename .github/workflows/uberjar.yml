@@ -122,7 +122,7 @@ jobs:
     timeout-minutes: 15
     strategy:
       matrix:
-        edition: oss
+        edition: ["oss"]
     env:
       MB_EDITION: ${{ matrix.edition }}
       INTERACTIVE: false
@@ -161,7 +161,7 @@ jobs:
     timeout-minutes: 10
     strategy:
       matrix:
-        edition: oss
+        edition: ["oss"]
         java-version: [21]
     steps:
       - name: Check out the code
