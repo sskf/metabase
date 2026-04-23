@@ -29,11 +29,12 @@ const CHART_TYPES = [
   { type: "area" as const, icon: "area" as const },
 ];
 
-type McpChartType = "line" | "bar" | "area";
+const TABLE_CHART_TYPE = { type: "table" as const, icon: "table2" as const };
 
-function isMcpChartType(type: string): type is McpChartType {
-  return CHART_TYPES.some((c) => c.type === type);
-}
+type McpChartType = "line" | "bar" | "area" | "table";
+
+const isMcpChartType = (type: string): type is McpChartType =>
+  [...CHART_TYPES, TABLE_CHART_TYPE].some((c) => c.type === type);
 
 export function McpQueryBar() {
   const { question, updateQuestion, queryResults } = useSdkQuestionContext();
@@ -47,11 +48,14 @@ export function McpQueryBar() {
     [queryResults],
   );
 
+  const rowCount = queryResults?.[0]?.data?.rows?.length ?? 0;
+
   // Hide the bar entirely when results haven't loaded yet, or when none of
   // line/bar/area are sensible for this query shape.
-  const sensibleChartTypes = CHART_TYPES.filter(({ type }) =>
-    sensibleVisualizations.includes(type),
-  );
+  const sensibleChartTypes = [
+    ...CHART_TYPES.filter(({ type }) => sensibleVisualizations.includes(type)),
+    ...(rowCount >= 2 ? [TABLE_CHART_TYPE] : []),
+  ];
 
   if (!question || !queryResults || sensibleChartTypes.length === 0) {
     return null;
@@ -121,6 +125,7 @@ export function McpQueryBar() {
     }
 
     const newColumn = Lib.withTemporalBucket(temporalColumn, bucket);
+
     const newQuery = Lib.replaceClause(
       query,
       stageIndex,
@@ -139,14 +144,17 @@ export function McpQueryBar() {
   // --- Date range filter ---
   // Find the first date filter in the current query (the one we manage).
   const allFilters = Lib.filters(query, stageIndex);
+
   let dateFilterClause: Lib.FilterClause | null = null;
   let dateFilterValue: DatePickerValue | undefined = undefined;
 
   for (const f of allFilters) {
     const value = getDatePickerValue(query, stageIndex, f);
+
     if (value != null) {
       dateFilterClause = f;
       dateFilterValue = value;
+
       break;
     }
   }
@@ -178,7 +186,9 @@ export function McpQueryBar() {
     if (!dateFilterClause) {
       return;
     }
+
     const newQuery = Lib.removeClause(query, stageIndex, dateFilterClause);
+
     updateQuestion(question.setQuery(newQuery), { run: true });
     setIsDateFilterOpen(false);
   };
@@ -250,6 +260,7 @@ export function McpQueryBar() {
             {bucketLabel}
           </Button>
         </Popover.Target>
+
         <Popover.Dropdown>
           <Box p="sm" miw={180}>
             <DefaultSelectItem
